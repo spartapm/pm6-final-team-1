@@ -24,12 +24,13 @@ import {
   User,
   X
 } from "lucide-react";
-import { books, genres, recentSearches, reviews as initialReviews, type Book, type Review } from "./data";
+import { genres, recentSearches, type Book, type Review } from "./data";
 import { supabase, supabaseUrl } from "@/lib/supabase";
 import { BESTSELLER_PREVIEW } from "@/lib/bestseller-isbn13";
 import {
   createReview,
   deleteReview,
+  fetchAladinBookDetail,
   fetchFixedBestsellerBooks,
   getCurrentProfile,
   listFeaturedBookIsbn13,
@@ -53,11 +54,11 @@ type Screen = "start" | "onboarding" | "preview" | "login" | "signup" | "home" |
 type ModalType = "more" | "report" | "deletePost" | "leaveWrite" | "logout" | "deleteAccount" | "profilePhoto" | "sort" | null;
 
 const currentUser = {
-  name: "꼬꼬",
-  tag: "#8888",
-  email: "bookmorak@example.com",
-  intro: "나는 원더풀을 너무 좋아하는 꼬꼬입니다~💛",
-  avatar: "🦆"
+  name: "독서광",
+  tag: "#0000",
+  email: "",
+  intro: "아직 소개글이 없습니다.",
+  avatar: "📚"
 };
 
 const fixedBookPreviews: Book[] = BESTSELLER_PREVIEW.map((book) => ({
@@ -74,14 +75,14 @@ const fixedBookPreviews: Book[] = BESTSELLER_PREVIEW.map((book) => ({
 export function BookmorakApp() {
   const [screen, setScreen] = useState<Screen>("start");
   const [activeBookId, setActiveBookId] = useState(fixedBookPreviews[0].id);
-  const [activePostId, setActivePostId] = useState(initialReviews[0].id);
+  const [activePostId, setActivePostId] = useState("");
   const [query, setQuery] = useState("");
   const [selectedGenre, setSelectedGenre] = useState("전체");
   const [liveBooks, setLiveBooks] = useState<Book[]>(fixedBookPreviews);
   const [selectedBooks, setSelectedBooks] = useState<string[]>(fixedBookPreviews.slice(0, 2).map((book) => book.id));
-  const [following, setFollowing] = useState<string[]>(fixedBookPreviews.slice(0, 3).map((book) => book.id));
+  const [following, setFollowing] = useState<string[]>([]);
   const [likedPosts, setLikedPosts] = useState<string[]>([]);
-  const [reviews, setReviews] = useState<Review[]>(initialReviews);
+  const [reviews, setReviews] = useState<Review[]>([]);
   const [draftRating, setDraftRating] = useState(0);
   const [draftBody, setDraftBody] = useState("");
   const [toast, setToast] = useState("");
@@ -93,7 +94,7 @@ export function BookmorakApp() {
   const isSyncing = false;
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const activeBook = liveBooks.find((book) => book.id === activeBookId) ?? books.find((book) => book.id === activeBookId) ?? liveBooks[0] ?? books[0];
+  const activeBook = liveBooks.find((book) => book.id === activeBookId) ?? liveBooks[0] ?? fixedBookPreviews[0];
   const activePost = reviews.find((review) => review.id === activePostId) ?? reviews[0];
 
   useEffect(() => {
@@ -207,13 +208,23 @@ export function BookmorakApp() {
   };
 
   const openBook = async (bookId: string) => {
-    const targetBook = liveBooks.find((book) => book.id === bookId) ?? books.find((book) => book.id === bookId);
+    const targetBook = liveBooks.find((book) => book.id === bookId);
     if (targetBook) {
       upsertBook(targetBook).catch(() => undefined);
     }
 
     setActiveBookId(bookId);
     setScreen("book");
+
+    try {
+      const detailedBook = await fetchAladinBookDetail(bookId);
+      if (!detailedBook) return;
+
+      setLiveBooks((prev) => mergeBooks(prev, [detailedBook]));
+      upsertBook(detailedBook).catch(() => undefined);
+    } catch {
+      showToast("책 상세 정보를 불러오지 못했습니다.");
+    }
   };
 
   const openPost = (postId: string) => {
@@ -231,7 +242,7 @@ export function BookmorakApp() {
     }
 
     try {
-      const targetBook = liveBooks.find((book) => book.id === bookId) ?? books.find((book) => book.id === bookId);
+      const targetBook = liveBooks.find((book) => book.id === bookId);
       if (targetBook) await upsertBook(targetBook);
       await toggleBookFollow(profile.id, bookId, shouldFollow);
     } catch {
@@ -313,14 +324,14 @@ export function BookmorakApp() {
     const nextReview: Review = {
       id: createdId,
       bookId: activeBook.id,
-      user: profile?.nickname ?? "복숭아말랭이",
+      user: profile?.nickname ?? currentUser.name,
       tag: profile?.tag ? `#${profile.tag}` : currentUser.tag,
-      avatar: profile?.avatar_url ?? "🍑",
+      avatar: profile?.avatar_url ?? currentUser.avatar,
       rating: draftRating,
       body: draftBody.trim(),
       likes: 0,
       comments: 0,
-      date: "2026.07.08",
+      date: new Intl.DateTimeFormat("ko-KR", { year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()).replaceAll(". ", ".").replace(".", ""),
       mine: true
     };
 
@@ -510,7 +521,7 @@ export function BookmorakApp() {
         {screen === "post" && (
           <PostDetailScreen
             review={activePost}
-            book={liveBooks.find((book) => book.id === activePost.bookId) ?? books.find((book) => book.id === activePost.bookId) ?? books[0]}
+            book={liveBooks.find((book) => book.id === activePost.bookId) ?? activeBook}
             liked={likedPosts.includes(activePost.id)}
             onBack={() => setScreen("home")}
             onBook={openBook}
@@ -678,7 +689,7 @@ function HomeScreen({ reviews, bookCatalog, likedPosts, onBook, onPost, onLike, 
           <ReviewCard
             key={review.id}
             review={review}
-            book={bookCatalog.find((book) => book.id === review.bookId) ?? books.find((book) => book.id === review.bookId) ?? books[0]}
+            book={bookCatalog.find((book) => book.id === review.bookId) ?? bookCatalog[0] ?? fixedBookPreviews[0]}
             liked={likedPosts.includes(review.id)}
             onBook={() => onBook(review.bookId)}
             onPost={() => onPost(review.id)}
@@ -758,8 +769,17 @@ function SearchScreen({ query, selectedGenre, following, results, isSyncing, onQ
 }
 
 function BookDetailScreen({ book, reviews, following, likedPosts, sortBy, onBack, onFollow, onWrite, onPost, onLike, onMore, onSort, onToast }: { book: Book; reviews: Review[]; following: boolean; likedPosts: string[]; sortBy: "latest" | "popular"; onBack: () => void; onFollow: () => void; onWrite: () => void; onPost: (postId: string) => void; onLike: (postId: string) => void; onMore: (postId: string) => void; onSort: () => void; onToast: (message: string) => void }) {
+  const [introExpanded, setIntroExpanded] = useState(false);
+  const isLoadingIntro = book.description.includes("실시간으로 불러오는 중");
+  const canExpandIntro = book.description.length > 120;
+  const intro = !canExpandIntro || introExpanded ? book.description : `${book.description.slice(0, 120)}...`;
+
+  useEffect(() => {
+    setIntroExpanded(false);
+  }, [book.id]);
+
   return (
-    <section className="scroll-content screen">
+    <section className="scroll-content screen detail-screen">
       <Header onBack={onBack} />
       <div className="book-hero">
         <BookCover book={book} />
@@ -781,7 +801,18 @@ function BookDetailScreen({ book, reviews, following, likedPosts, sortBy, onBack
       </div>
       <section className="book-intro">
         <h2>책 소개</h2>
-        <p>{book.description} ... <button>더보기</button></p>
+        {isLoadingIntro ? (
+          <p className="hint">알라딘 API에서 책 소개를 불러오고 있습니다.</p>
+        ) : (
+          <p>
+            {intro}
+            {canExpandIntro && (
+              <button onClick={() => setIntroExpanded((prev) => !prev)}>
+                {introExpanded ? "접기" : "더보기"}
+              </button>
+            )}
+          </p>
+        )}
       </section>
       <div className="sort-row">
         <button onClick={onSort}>{sortBy === "latest" ? "최신순" : "좋아요순"} ^</button>
@@ -879,7 +910,7 @@ function MyPageScreen({ reviews, profile, bookCatalog, followingCount, onSetting
         <ReviewCard
           key={review.id}
           review={review}
-          book={bookCatalog.find((book) => book.id === review.bookId) ?? books.find((book) => book.id === review.bookId) ?? books[0]}
+          book={bookCatalog.find((book) => book.id === review.bookId) ?? bookCatalog[0] ?? fixedBookPreviews[0]}
           onBook={() => onBook(review.bookId)}
           onPost={() => onPost(review.id)}
           onLike={() => onToast("내 게시글에도 좋아요를 남겼어요.")}
@@ -969,7 +1000,6 @@ function OnboardingScreen({ bookCatalog, selectedBooks, selectedGenre, onBack, o
 
 function PreviewScreen({ bookCatalog, selectedBooks, onBack, onAdd, onSignup }: { bookCatalog: Book[]; selectedBooks: string[]; onBack: () => void; onAdd: () => void; onSignup: () => void }) {
   const selected = bookCatalog.filter((book) => selectedBooks.includes(book.id));
-  const previewReviews = initialReviews.filter((review) => selectedBooks.includes(review.bookId));
 
   return (
     <section className="scroll-content screen">
@@ -984,9 +1014,7 @@ function PreviewScreen({ bookCatalog, selectedBooks, onBack, onAdd, onSignup }: 
         ))}
         <button className="add-book" onClick={onAdd}>+ 책 추가하기</button>
       </div>
-      {previewReviews.map((review) => (
-        <ReviewCard key={review.id} review={review} book={books.find((book) => book.id === review.bookId) ?? books[0]} onBook={() => undefined} onPost={() => undefined} onLike={() => undefined} onToast={() => undefined} />
-      ))}
+      <EmptyState title="가입하면 실제 감상글을 볼 수 있어요." body="선택한 책을 기준으로 DB에 저장된 감상글이 홈 피드에 표시됩니다." />
       <button className="primary-button floating-start" onClick={onSignup}>시작하기</button>
     </section>
   );
@@ -1186,24 +1214,24 @@ function Comment({ name, body, likes, small = false, onReply }: { name: string; 
 }
 
 function NotificationsScreen({ onBack, onPost, onClear }: { onBack: () => void; onPost: (postId: string) => void; onClear: () => void }) {
-  const items = [
-    { id: "n1", postId: initialReviews[0].id, icon: "💛", title: "복숭아말랭이님이 회원님의 게시글을 좋아합니다.", time: "방금 전" },
-    { id: "n2", postId: initialReviews[1].id, icon: "💬", title: "동사가좋아님이 댓글을 남겼습니다.", time: "12분 전" },
-    { id: "n3", postId: initialReviews[2].id, icon: "↩", title: "몽게몽게님이 답글을 남겼습니다.", time: "어제" }
-  ];
+  const items: { id: string; postId: string; icon: string; title: string; time: string }[] = [];
 
   return (
     <section className="screen">
       <Header title="알림" onBack={onBack} right={<button className="save-button" onClick={onClear}>모두 읽기</button>} />
-      <div className="notification-list">
-        {items.map((item) => (
-          <button key={item.id} className="notification-item" onClick={() => onPost(item.postId)}>
-            <span>{item.icon}</span>
-            <strong>{item.title}</strong>
-            <small>{item.time}</small>
-          </button>
-        ))}
-      </div>
+      {items.length === 0 ? (
+        <EmptyState title="아직 알림이 없어요." body="좋아요와 댓글 알림이 생기면 이곳에 표시됩니다." />
+      ) : (
+        <div className="notification-list">
+          {items.map((item) => (
+            <button key={item.id} className="notification-item" onClick={() => onPost(item.postId)}>
+              <span>{item.icon}</span>
+              <strong>{item.title}</strong>
+              <small>{item.time}</small>
+            </button>
+          ))}
+        </div>
+      )}
     </section>
   );
 }

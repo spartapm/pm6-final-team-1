@@ -12,28 +12,42 @@
   --radius-card: 10px;
   --cover-w: 42px;
   --cover-h: 60px;
+  --text-title: 24px;
+  --text-subtitle: 18px;
+  --text-body: 16px;
+  --text-caption: 13px;
+  --line-title: 1.22;
+  --line-body: 1.42;
 }
 
-* {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
+  min-width: 0;
 }
 
 html,
 body {
   margin: 0;
+  width: 100%;
+  height: 100%;
   min-height: 100%;
+  overflow: hidden;
   background: var(--bg);
   color: var(--ink);
   font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", "Segoe UI", sans-serif;
-  font-size: 16px;
-  line-height: 1.35;
+  font-size: var(--text-body);
+  line-height: var(--line-body);
   -webkit-font-smoothing: antialiased;
+  overscroll-behavior: none;
 }
 
 button,
 input,
 textarea {
   font: inherit;
+  min-width: 0;
 }
 
 button {
@@ -41,11 +55,25 @@ button {
   background: transparent;
   color: inherit;
   cursor: pointer;
+  min-width: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+img,
+svg {
+  max-width: 100%;
+}
+
+svg {
+  flex-shrink: 0;
 }
 
 .shell {
   display: flex;
-  min-height: 100vh;
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
   justify-content: center;
   background: radial-gradient(circle at top left, #fff7dd 0 15%, transparent 16%), #eeeeee;
 }
@@ -53,15 +81,31 @@ button {
 .phone {
   position: relative;
   width: min(100vw, 393px);
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
   overflow: hidden;
   background: var(--surface);
   box-shadow: 0 0 40px rgb(0 0 0 / 8%);
+  overscroll-behavior: contain;
 }
 
 .scroll-content {
-  height: 100vh;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: none;
+}
+
+.phone > .screen,
+.phone > .start-screen {
+  height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .with-tab {
@@ -69,6 +113,9 @@ button {
 }
 
 .screen {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
   padding: 50px var(--screen-x) 28px;
 }
 
@@ -84,6 +131,7 @@ button {
   text-align: center;
   font-size: 22px;
   font-weight: 800;
+  line-height: var(--line-title);
   letter-spacing: -0.05em;
 }
 
@@ -101,6 +149,15 @@ button {
   width: 42px;
   height: 42px;
   color: #111111;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.icon-button svg,
+.settings-button svg,
+.bell-button svg {
+  width: 24px;
+  height: 24px;
 }
 
 .logo-text {
@@ -123,9 +180,13 @@ button {
   gap: 8px;
   width: 100%;
   min-height: 60px;
-  border-radius: 8px;
+  padding: 0 18px;
+  border-radius: 10px;
   font-weight: 800;
-  font-size: 17px;
+  font-size: 16px;
+  line-height: 1.2;
+  letter-spacing: -0.04em;
+  white-space: nowrap;
 }
 
 .primary-button {
@@ -135,6 +196,7 @@ button {
 
 .primary-button.compact {
   min-height: 42px;
+  padding: 0 14px;
   font-size: 15px;
 }
 
@@ -154,7 +216,7 @@ button {
 .start-screen {
   position: relative;
   display: flex;
-  min-height: 100vh;
+  min-height: 100%;
   flex-direction: column;
   justify-content: flex-end;
   padding: 44px 17px 70px;
@@ -228,13 +290,13 @@ button {
 .lead {
   display: block;
   margin: 0 0 18px;
-  font-size: 16px;
-  line-height: 1.45;
+  font-size: var(--text-body);
+  line-height: var(--line-body);
 }
 
 .hint {
   font-size: 14px;
-  line-height: 1.4;
+  line-height: var(--line-body);
 }
 
 .logo-hero p {
@@ -273,7 +335,7 @@ button {
 
 .book-strip {
   display: grid;
-  grid-template-columns: 42px 1fr 28px;
+  grid-template-columns: 42px minmax(0, 1fr) 28px;
   align-items: center;
   width: 100%;
   min-height: 70px;
@@ -311,7 +373,7 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13px;
+  font-size: var(--text-caption);
 }
 
 .book-cover {
@@ -412,8 +474,8 @@ button {
 .review-body {
   width: 100%;
   padding: 0;
-  font-size: 16px;
-  line-height: 1.38;
+  font-size: var(--text-body);
+  line-height: var(--line-body);
   text-align: left;
   white-space: pre-wrap;
   letter-spacing: -0.045em;
@@ -501,17 +563,29 @@ button {
   margin: 24px 0 14px;
 }
 
+.section-row h2 {
+  font-size: 20px;
+  font-weight: 900;
+  line-height: var(--line-title);
+}
+
 h1,
 h2,
+h3,
 p {
   letter-spacing: -0.04em;
 }
 
+h1,
 h2 {
   margin: 0;
-  font-size: 24px;
+  font-size: var(--text-title);
   font-weight: 800;
-  line-height: 1.25;
+  line-height: var(--line-title);
+}
+
+p {
+  line-height: var(--line-body);
 }
 
 .text-button,
@@ -540,6 +614,8 @@ h2 {
   border-radius: 999px;
   background: white;
   font-weight: 700;
+  font-size: 14px;
+  line-height: 1;
   white-space: nowrap;
   letter-spacing: -0.04em;
 }
@@ -552,13 +628,21 @@ h2 {
 
 .genre-chips {
   margin-bottom: 18px;
+  max-width: 100%;
   overflow-x: auto;
+  overflow-y: hidden;
   flex-wrap: nowrap;
+  scrollbar-width: none;
+}
+
+.genre-chips::-webkit-scrollbar,
+.selected-book-scroll::-webkit-scrollbar {
+  display: none;
 }
 
 .book-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 20px;
 }
 
@@ -597,7 +681,7 @@ h2 {
   display: block;
   margin-top: 5px;
   font-weight: 800;
-  font-size: 13px;
+  font-size: var(--text-caption);
 }
 
 .mini-follow {
@@ -702,22 +786,157 @@ h2 {
 .book-intro p,
 .post-body {
   margin: 0;
-  font-size: 16px;
-  line-height: 1.4;
+  font-size: var(--text-body);
+  line-height: var(--line-body);
 }
 
 .book-intro button {
+  margin-left: 4px;
   color: #999999;
+  font-weight: 700;
 }
 
 .sort-row {
   padding: 14px 0;
 }
 
+.detail-screen {
+  padding: 28px 16px 36px;
+}
+
+.detail-screen .header {
+  grid-template-columns: 44px 1fr 44px;
+  min-height: 48px;
+  margin-bottom: 28px;
+}
+
+.detail-screen .header-title .logo-text {
+  font-size: 24px;
+  letter-spacing: -0.08em;
+}
+
+.detail-screen .icon-button {
+  width: 44px;
+  height: 44px;
+  justify-content: flex-start;
+}
+
+.detail-screen .book-hero {
+  grid-template-columns: 126px minmax(0, 1fr);
+  gap: 20px;
+  padding: 0 16px 34px 20px;
+  border-bottom: 1px solid #b7b7b7;
+}
+
+.detail-screen .book-hero > .book-cover {
+  --cover-w: 126px;
+  --cover-h: 181px;
+  border-radius: 10px;
+}
+
+.detail-screen .book-hero h1 {
+  margin: 0 0 6px;
+  font-size: 25px;
+  font-weight: 900;
+  line-height: 1.16;
+  letter-spacing: -0.055em;
+}
+
+.detail-screen .book-hero p {
+  margin: 0 0 7px;
+  color: #777777;
+  font-size: 15px;
+  line-height: 1.35;
+}
+
+.detail-screen .rating-line {
+  margin-bottom: 7px;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.detail-screen .tags {
+  margin: 0 0 14px;
+}
+
+.detail-screen .tags span {
+  padding: 5px 10px;
+  border-color: #cfcfcf;
+  border-radius: 4px;
+  background: white;
+  font-size: 15px;
+}
+
+.detail-screen .book-actions {
+  display: grid;
+  grid-template-columns: 1fr 78px;
+  gap: 12px;
+  margin: 0 0 8px;
+  align-items: center;
+}
+
+.detail-screen .book-actions p {
+  margin: 0;
+  color: #999999;
+  font-size: 16px;
+}
+
+.detail-screen .book-actions p strong {
+  color: #222222;
+  font-size: 17px;
+}
+
+.detail-screen .outline-small {
+  min-width: 76px;
+  padding: 7px 12px;
+  border-radius: 8px;
+  background: white;
+}
+
+.detail-screen .primary-button.compact {
+  min-height: 42px;
+  border-radius: 8px;
+  font-size: 15px;
+}
+
+.detail-screen .book-intro {
+  padding: 18px 16px 20px;
+  border-bottom: 1px solid #b7b7b7;
+}
+
+.detail-screen .book-intro h2 {
+  margin-bottom: 8px;
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.detail-screen .book-intro p {
+  font-size: var(--text-body);
+  line-height: var(--line-body);
+  letter-spacing: -0.04em;
+}
+
+.detail-screen .book-intro .hint {
+  color: #999999;
+}
+
+.detail-screen .sort-row {
+  padding: 15px 10px 14px;
+}
+
+.detail-screen .sort-row button {
+  font-size: 15px;
+}
+
+.detail-screen .empty-state {
+  min-height: 238px;
+  padding: 28px 20px;
+}
+
 .selected-book-card,
 .book-row {
   display: grid;
-  grid-template-columns: 58px 1fr 70px;
+  grid-template-columns: 58px minmax(0, 1fr) 70px;
   align-items: center;
   gap: 14px;
   width: 100%;
@@ -754,7 +973,7 @@ h2 {
 }
 
 .onboarding-book-list .book-row {
-  grid-template-columns: 82px 1fr 72px;
+  grid-template-columns: 82px minmax(0, 1fr) 72px;
   min-height: 152px;
   padding: 18px 16px;
   border-color: var(--primary);
@@ -791,27 +1010,35 @@ h2 {
 }
 
 .write-screen h2 {
-  color: #999999;
-  font-size: 18px;
+  color: #777777;
+  font-size: var(--text-subtitle);
+  font-weight: 900;
 }
 
 .rating-picker {
   display: grid;
-  grid-template-columns: repeat(5, 1fr) 60px;
+  grid-template-columns: repeat(5, minmax(0, 1fr)) 52px;
   align-items: center;
   gap: 8px;
   margin: 16px 0 8px;
 }
 
+.rating-picker button {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+}
+
 .rating-picker button svg {
-  width: 46px;
-  height: 46px;
+  width: clamp(32px, 10vw, 44px);
+  height: clamp(32px, 10vw, 44px);
   color: #999999;
 }
 
 .rating-picker strong {
   color: var(--primary);
-  font-size: 26px;
+  font-size: 24px;
+  line-height: 1;
 }
 
 .guide-box {
@@ -824,19 +1051,23 @@ h2 {
 
 .guide-box p {
   margin: 4px 0 0;
-  line-height: 1.35;
+  line-height: var(--line-body);
 }
 
 .textarea-card {
   display: block;
   position: relative;
+  width: 100%;
+  max-width: 100%;
   min-height: 356px;
   border: 1px solid #d7d7d7;
   border-radius: 8px;
+  overflow: hidden;
 }
 
 .textarea-card textarea {
   width: 100%;
+  max-width: 100%;
   min-height: 330px;
   padding: 14px 12px 32px;
   resize: none;
@@ -909,7 +1140,7 @@ h2 {
   padding: 10px 12px;
   border: 1px solid #dddddd;
   border-radius: 8px;
-  line-height: 1.35;
+  line-height: var(--line-body);
 }
 
 .profile-stats {
@@ -1004,8 +1235,11 @@ h2 {
 .selected-book-scroll {
   display: flex;
   gap: 12px;
+  max-width: 100%;
   padding: 8px 0 20px;
   overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
 }
 
 .mini-book,
@@ -1068,14 +1302,19 @@ h2 {
   display: grid;
   gap: 8px;
   font-weight: 800;
+  font-size: 14px;
+  letter-spacing: -0.04em;
 }
 
 .field input {
+  width: 100%;
   min-height: 52px;
   padding: 0 14px;
   border: 1px solid #dddddd;
   border-radius: 8px;
   outline-color: var(--primary);
+  font-size: 15px;
+  font-weight: 500;
 }
 
 .link-button {
@@ -1447,5 +1686,16 @@ h2 {
   .book-hero > .book-cover {
     --cover-w: 112px;
     --cover-h: 160px;
+  }
+
+  .detail-screen .book-hero {
+    grid-template-columns: 126px minmax(0, 1fr);
+    gap: 18px;
+    padding-inline: 20px 12px;
+  }
+
+  .detail-screen .book-hero > .book-cover {
+    --cover-w: 126px;
+    --cover-h: 181px;
   }
 }
