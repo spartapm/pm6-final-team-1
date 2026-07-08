@@ -97,7 +97,11 @@ export async function signInWithKakao() {
   const { error } = await supabase.auth.signInWithOAuth({
     provider: "kakao",
     options: {
-      redirectTo
+      redirectTo,
+      scopes: "profile_nickname profile_image",
+      queryParams: {
+        scope: "profile_nickname profile_image"
+      }
     }
   });
 
