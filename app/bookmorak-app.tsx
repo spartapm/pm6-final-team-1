@@ -2,38 +2,44 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
+import type { StaticImageData } from "next/image";
 import {
   AlertTriangle,
   Bell,
   BookOpen,
-  Camera,
   ChevronLeft,
   ChevronRight,
   CheckCircle2,
-  Heart,
-  Home,
   Mail,
-  MessageCircle,
   MoreHorizontal,
-  PlusSquare,
-  Search,
-  Settings,
-  ShieldCheck,
-  Star,
-  Trash2,
-  User,
-  X
+  ShieldCheck
 } from "lucide-react";
+import homeIcon from "../team-1-icons/(홈) 하단바.svg";
+import homeActiveIcon from "../team-1-icons/(홈) 하단바-1.svg";
+import searchIcon from "../team-1-icons/(둘러보기) 하단바.svg";
+import searchActiveIcon from "../team-1-icons/(둘러보기) 하단바-1.svg";
+import writeIcon from "../team-1-icons/(게시글 생성) 둘러보기.svg";
+import writeActiveIcon from "../team-1-icons/(게시글 생성) 둘러보기-1.svg";
+import myIcon from "../team-1-icons/(마이) 하단바.svg";
+import myActiveIcon from "../team-1-icons/(마이) 하단바-1.svg";
+import searchFieldIcon from "../team-1-icons/(검색) 온보딩, 검색화면-검색 필드.svg";
+import deleteIcon from "../team-1-icons/(삭제) 온보딩, 검색-검색 입력 필드.svg";
+import settingsIcon from "../team-1-icons/(설정) 마이페이지-왼쪽 상단.svg";
+import cameraIcon from "../team-1-icons/(카메라) 계정생성, 마이페이지-사진 구역.svg";
+import starIcon from "../team-1-icons/(별점) 홈 피드, 책 상세페이지, 게시글 작성, 마이페이지-책 정보.svg";
+import starActiveIcon from "../team-1-icons/(별점) 홈 피드, 책 상세페이지, 게시글 작성, 마이페이지-책 정보-1.svg";
+import likeIcon from "../team-1-icons/(좋아요) 홈 피드, 게시글 상세페이지, 책 상세페이지-글 아래.svg";
+import likeActiveIcon from "../team-1-icons/(좋아요) 홈 피드, 게시글 상세페이지, 책 상세페이지-글 아래-1.svg";
+import commentIcon from "../team-1-icons/(댓글) 홈 피드, 게시글 상세페이지, 책 상세페이지-글 아래.svg";
 import { genres, recentSearches, type Book, type Review } from "./data";
 import { supabase, supabaseUrl } from "@/lib/supabase";
-import { BESTSELLER_PREVIEW } from "@/lib/bestseller-isbn13";
+import { BESTSELLER_ISBN13, BESTSELLER_PREVIEW } from "@/lib/bestseller-isbn13";
 import {
   createReview,
   deleteReview,
   fetchAladinBookDetail,
   fetchFixedBestsellerBooks,
   getCurrentProfile,
-  listFeaturedBookIsbn13,
   listBooks,
   listFeedReviews,
   listFollowingBookIds,
@@ -52,6 +58,7 @@ import {
 
 type Screen = "start" | "onboarding" | "preview" | "login" | "signup" | "home" | "notifications" | "search" | "book" | "write" | "mypage" | "following" | "settings" | "terms" | "privacy" | "profile" | "password" | "post";
 type ModalType = "more" | "report" | "deletePost" | "leaveWrite" | "logout" | "deleteAccount" | "profilePhoto" | "sort" | null;
+type IconSource = StaticImageData | string;
 
 const currentUser = {
   name: "독서광",
@@ -146,9 +153,8 @@ export function BookmorakApp() {
           setScreen("home");
         }
 
-        const featuredIsbn13 = await listFeaturedBookIsbn13().catch(() => []);
         const [fixedBooks, dbBooks, dbFollows, dbReviews] = await Promise.all([
-          fetchFixedBestsellerBooks(100, featuredIsbn13).catch(() => []),
+          fetchFixedBestsellerBooks(100, [...BESTSELLER_ISBN13]).catch(() => []),
           listBooks().catch(() => []),
           currentProfile ? listFollowingBookIds(currentProfile.id).catch(() => []) : Promise.resolve([]),
           listFeedReviews().catch(() => [])
@@ -208,11 +214,6 @@ export function BookmorakApp() {
   };
 
   const openBook = async (bookId: string) => {
-    const targetBook = liveBooks.find((book) => book.id === bookId);
-    if (targetBook) {
-      upsertBook(targetBook).catch(() => undefined);
-    }
-
     setActiveBookId(bookId);
     setScreen("book");
 
@@ -221,7 +222,6 @@ export function BookmorakApp() {
       if (!detailedBook) return;
 
       setLiveBooks((prev) => mergeBooks(prev, [detailedBook]));
-      upsertBook(detailedBook).catch(() => undefined);
     } catch {
       showToast("책 상세 정보를 불러오지 못했습니다.");
     }
@@ -634,19 +634,19 @@ function AppFrame({ children, active, onNavigate }: { children: React.ReactNode;
     <>
       <div className="scroll-content with-tab">{children}</div>
       <nav className="tabbar">
-        <TabButton active={active === "home"} icon={<Home />} label="홈" onClick={() => onNavigate("home")} />
-        <TabButton active={active === "search"} icon={<Search />} label="둘러보기" onClick={() => onNavigate("search")} />
-        <TabButton active={active === "write"} icon={<PlusSquare />} label="게시글 생성" onClick={() => onNavigate("write")} />
-        <TabButton active={active === "mypage"} icon={<User />} label="마이" onClick={() => onNavigate("mypage")} />
+        <TabButton active={active === "home"} icon={active === "home" ? homeActiveIcon : homeIcon} label="홈" onClick={() => onNavigate("home")} />
+        <TabButton active={active === "search"} icon={active === "search" ? searchActiveIcon : searchIcon} label="둘러보기" onClick={() => onNavigate("search")} />
+        <TabButton active={active === "write"} icon={active === "write" ? writeActiveIcon : writeIcon} label="게시글 생성" onClick={() => onNavigate("write")} />
+        <TabButton active={active === "mypage"} icon={active === "mypage" ? myActiveIcon : myIcon} label="마이" onClick={() => onNavigate("mypage")} />
       </nav>
     </>
   );
 }
 
-function TabButton({ active, icon, label, onClick }: { active: boolean; icon: React.ReactElement; label: string; onClick: () => void }) {
+function TabButton({ active, icon, label, onClick }: { active: boolean; icon: IconSource; label: string; onClick: () => void }) {
   return (
     <button className={active ? "tab active" : "tab"} onClick={onClick}>
-      {icon}
+      <IconAsset src={icon} alt="" size={24} />
       <span>{label}</span>
     </button>
   );
@@ -670,6 +670,10 @@ function LogoText() {
       <span>책</span>모락
     </span>
   );
+}
+
+function IconAsset({ src, alt, size, className }: { src: IconSource; alt: string; size: number; className?: string }) {
+  return <Image className={className ? `icon-asset ${className}` : "icon-asset"} src={src} alt={alt} width={size} height={size} unoptimized />;
 }
 
 function HomeScreen({ reviews, bookCatalog, likedPosts, onBook, onPost, onLike, onMore, onToast, onNotifications }: { reviews: Review[]; bookCatalog: Book[]; likedPosts: string[]; onBook: (bookId: string) => void; onPost: (postId: string) => void; onLike: (postId: string) => void; onMore: (postId: string) => void; onToast: (message: string) => void; onNotifications: () => void }) {
@@ -707,11 +711,11 @@ function SearchScreen({ query, selectedGenre, following, results, isSyncing, onQ
   return (
     <section className="screen">
       <label className="search-box">
-        <Search size={20} />
+        <IconAsset src={searchFieldIcon} alt="" size={20} />
         <input value={query} onChange={(event) => onQuery(event.target.value)} placeholder="검색어를 입력해 주세요." />
         {query && (
           <button onClick={() => onQuery("")} aria-label="검색어 삭제">
-            <X size={18} />
+            <IconAsset src={deleteIcon} alt="" size={18} />
           </button>
         )}
       </label>
@@ -719,12 +723,12 @@ function SearchScreen({ query, selectedGenre, following, results, isSyncing, onQ
         <>
           <div className="section-row">
             <h2>최근 검색어</h2>
-            <button className="text-button">전체 삭제 <Trash2 size={14} /></button>
+            <button className="text-button">전체 삭제 <IconAsset src={deleteIcon} alt="" size={14} /></button>
           </div>
           <div className="chips">
             {recentSearches.map((item) => (
               <button key={item} className="chip" onClick={() => onQuery(item)}>
-                {item} <X size={14} />
+                {item} <IconAsset src={deleteIcon} alt="" size={14} />
               </button>
             ))}
           </div>
@@ -815,7 +819,9 @@ function BookDetailScreen({ book, reviews, following, likedPosts, sortBy, onBack
         )}
       </section>
       <div className="sort-row">
-        <button onClick={onSort}>{sortBy === "latest" ? "최신순" : "좋아요순"} ^</button>
+        <button onClick={onSort}>
+          {sortBy === "latest" ? "최신순" : "좋아요순"} <ChevronRight size={16} />
+        </button>
       </div>
       {reviews.length === 0 ? (
         <EmptyState title="아직 게시글이 없어요." body="이 책의 첫 번째 감상을 남겨보세요." />
@@ -857,7 +863,7 @@ function WriteScreen({ book, rating, body, onBack, onRating, onBody, onSubmit, o
       <div className="rating-picker">
         {[1, 2, 3, 4, 5].map((score) => (
           <button key={score} onClick={() => onRating(score)} aria-label={`${score}점`}>
-            <Star fill={score <= rating ? "#ffb21a" : "transparent"} />
+            <IconAsset src={score <= rating ? starActiveIcon : starIcon} alt="" size={42} />
           </button>
         ))}
         <strong>{rating}/5</strong>
@@ -887,7 +893,7 @@ function WriteScreen({ book, rating, body, onBack, onRating, onBody, onSubmit, o
 function MyPageScreen({ reviews, profile, bookCatalog, followingCount, onSettings, onProfile, onFollowing, onBook, onPost, onMore, onToast }: { reviews: Review[]; profile: Profile | null; bookCatalog: Book[]; followingCount: number; onSettings: () => void; onProfile: () => void; onFollowing: () => void; onBook: (bookId: string) => void; onPost: (postId: string) => void; onMore: (postId: string) => void; onToast: (message: string) => void }) {
   return (
     <section className="screen mypage-screen">
-      <Header title="마이페이지" right={<button className="settings-button" onClick={onSettings}><Settings /></button>} />
+      <Header title="마이페이지" right={<button className="settings-button" onClick={onSettings}><IconAsset src={settingsIcon} alt="설정" size={24} /></button>} />
       <div className="profile-summary">
         <div className="profile-left">
           <div className="avatar large">{profile?.avatar_url ? <Image src={profile.avatar_url} alt="프로필 이미지" width={104} height={104} unoptimized /> : currentUser.avatar}</div>
@@ -949,10 +955,10 @@ function ReviewCard({ review, book, liked = false, compact = false, variant, onB
       </button>
       <footer className="review-meta">
         <button className={liked ? "liked" : ""} onClick={onLike}>
-          <Heart size={17} fill={liked ? "#ffb21a" : "transparent"} /> {formatCount(review.likes + (liked ? 1 : 0))}
+          <IconAsset src={liked ? likeActiveIcon : likeIcon} alt="" size={17} /> {formatCount(review.likes + (liked ? 1 : 0))}
         </button>
         <button onClick={onPost}>
-          <MessageCircle size={17} /> {review.comments}
+          <IconAsset src={commentIcon} alt="" size={17} /> {review.comments}
         </button>
         <time>{review.date}</time>
       </footer>
@@ -1135,7 +1141,7 @@ function ProfileScreen({ profile, onBack, onPassword, onPhoto, onSave }: { profi
       <Header title="프로필 편집" onBack={onBack} right={<button className="save-button" onClick={() => onSave({ nickname, bio })}>완료</button>} />
       <button className="profile-photo-button" onClick={onPhoto}>
         <span className="avatar upload">{profile?.avatar_url ? <Image src={profile.avatar_url} alt="프로필 이미지" width={104} height={104} unoptimized /> : currentUser.avatar}</span>
-        <b><Camera size={16} /></b>
+        <b><IconAsset src={cameraIcon} alt="" size={16} /></b>
       </button>
       <label className="field"><span>소개글</span><input value={bio} onChange={(event) => setBio(event.target.value)} maxLength={100} /></label>
       <label className="field"><span>닉네임</span><input value={nickname} onChange={(event) => setNickname(event.target.value)} maxLength={10} /></label>
@@ -1177,8 +1183,8 @@ function PostDetailScreen({ review, book, liked, onBack, onBook, onLike, onMore,
       </div>
       <p className="post-body">{review.body}</p>
       <footer className="review-meta">
-        <button className={liked ? "liked" : ""} onClick={onLike}><Heart size={18} fill={liked ? "#ffb21a" : "transparent"} /> {formatCount(review.likes + (liked ? 1 : 0))}</button>
-        <button><MessageCircle size={18} /> 댓글 {review.comments}</button>
+        <button className={liked ? "liked" : ""} onClick={onLike}><IconAsset src={liked ? likeActiveIcon : likeIcon} alt="" size={18} /> {formatCount(review.likes + (liked ? 1 : 0))}</button>
+        <button><IconAsset src={commentIcon} alt="" size={18} /> 댓글 {review.comments}</button>
         <time>{review.date}</time>
       </footer>
       <section className="comments">
@@ -1207,7 +1213,7 @@ function Comment({ name, body, likes, small = false, onReply }: { name: string; 
     <article className={small ? "comment small-comment" : "comment"}>
       <strong>{name}</strong>
       <p>{body}</p>
-      <button><Heart size={15} /> {likes}</button>
+      <button><IconAsset src={likeIcon} alt="" size={15} /> {likes}</button>
       {onReply && <button onClick={onReply}>답글 달기</button>}
     </article>
   );
@@ -1220,7 +1226,11 @@ function NotificationsScreen({ onBack, onPost, onClear }: { onBack: () => void; 
     <section className="screen">
       <Header title="알림" onBack={onBack} right={<button className="save-button" onClick={onClear}>모두 읽기</button>} />
       {items.length === 0 ? (
-        <EmptyState title="아직 알림이 없어요." body="좋아요와 댓글 알림이 생기면 이곳에 표시됩니다." />
+        <div className="notification-empty">
+          <Bell />
+          <strong>새 알림이 없습니다.</strong>
+          <p>좋아요, 댓글, 답글 알림이 생기면 이곳에서 확인할 수 있어요.</p>
+        </div>
       ) : (
         <div className="notification-list">
           {items.map((item) => (
@@ -1408,7 +1418,7 @@ function RatingStars({ rating }: { rating: number }) {
   return (
     <span className="stars" aria-label={`${rating}점`}>
       {[1, 2, 3, 4, 5].map((score) => (
-        <Star key={score} size={16} fill={score <= rating ? "#ffb21a" : "#d9d9d9"} color={score <= rating ? "#ffb21a" : "#d9d9d9"} />
+        <IconAsset key={score} src={score <= rating ? starActiveIcon : starIcon} alt="" size={16} />
       ))}
     </span>
   );

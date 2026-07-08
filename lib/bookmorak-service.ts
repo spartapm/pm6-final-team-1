@@ -240,8 +240,15 @@ export async function upsertBook(book: AladinBook | Book) {
     .upsert(
       {
         id: isbn13 || aladinBook.isbn || book.id,
+        title: book.title,
+        author: book.author,
+        cover_url: book.cover || null,
+        description: book.description,
+        genres: book.genres,
         aladin_isbn: aladinBook.isbn ?? null,
-        aladin_isbn13: isbn13
+        aladin_isbn13: isbn13,
+        aladin_item_id: aladinBook.aladinItemId ?? null,
+        aladin_category_name: aladinBook.categoryName ?? book.genres[0] ?? null
       },
       { onConflict: "id" }
     )
