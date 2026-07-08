@@ -36,6 +36,7 @@ import {
   listFollowingBookIds,
   reportReview,
   signInWithEmail,
+  signInWithKakao,
   signOut,
   signUpWithEmail,
   toggleBookFollow,
@@ -356,7 +357,13 @@ export function BookmorakApp() {
             onSignup={() => setScreen("signup")}
           />
         )}
-        {screen === "login" && <LoginScreen onBack={() => setScreen("start")} onLogin={handleLogin} onSignup={() => setScreen("signup")} />}
+        {screen === "login" && <LoginScreen onBack={() => setScreen("start")} onLogin={handleLogin} onKakaoLogin={async () => {
+          try {
+            await signInWithKakao();
+          } catch {
+            showToast("카카오 로그인 설정을 확인해주세요.");
+          }
+        }} onSignup={() => setScreen("signup")} />}
         {screen === "signup" && <SignupScreen onBack={() => setScreen("preview")} onDone={handleSignup} onTerms={() => { setPolicyReturn("signup"); setScreen("terms"); }} onPrivacy={() => { setPolicyReturn("signup"); setScreen("privacy"); }} />}
         {screen === "home" && (
           <AppFrame active="home" onNavigate={setScreen}>
@@ -923,7 +930,7 @@ function PreviewScreen({ selectedBooks, onBack, onAdd, onSignup }: { selectedBoo
   );
 }
 
-function LoginScreen({ onBack, onLogin, onSignup }: { onBack: () => void; onLogin: (email: string, password: string) => void; onSignup: () => void }) {
+function LoginScreen({ onBack, onLogin, onKakaoLogin, onSignup }: { onBack: () => void; onLogin: (email: string, password: string) => void; onKakaoLogin: () => void; onSignup: () => void }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
@@ -931,7 +938,7 @@ function LoginScreen({ onBack, onLogin, onSignup }: { onBack: () => void; onLogi
     <section className="screen auth-screen">
       <Header title="로그인" onBack={onBack} />
       <LogoText />
-      <button className="social kakao">카카오로 로그인</button>
+      <button className="social kakao" onClick={onKakaoLogin}>카카오로 로그인</button>
       <button className="social">Google로 로그인</button>
       <button className="social dark">Apple로 로그인</button>
       <label className="field"><span>이메일</span><input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="이메일을 입력해주세요" /></label>

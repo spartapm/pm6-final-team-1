@@ -92,6 +92,18 @@ export async function signInWithEmail(email: string, password: string) {
   return getCurrentProfile();
 }
 
+export async function signInWithKakao() {
+  const redirectTo = typeof window === "undefined" ? undefined : window.location.origin;
+  const { error } = await supabase.auth.signInWithOAuth({
+    provider: "kakao",
+    options: {
+      redirectTo
+    }
+  });
+
+  if (error) throw error;
+}
+
 export async function signUpWithEmail(email: string, password: string, nickname: string) {
   const { data, error } = await supabase.auth.signUp({
     email,
