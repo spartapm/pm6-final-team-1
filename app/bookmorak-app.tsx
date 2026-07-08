@@ -524,11 +524,20 @@ export function BookmorakApp() {
             setModal(null);
           }}
         />
-        <input ref={fileInputRef} className="hidden-file-input" type="file" accept="image/*" onChange={(event) => {
-          const file = event.target.files?.[0];
-          if (file) void handleProfileImage(file);
-          event.currentTarget.value = "";
-        }} />
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          hidden
+          aria-hidden="true"
+          tabIndex={-1}
+          style={{ display: "none" }}
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (file) void handleProfileImage(file);
+            event.currentTarget.value = "";
+          }}
+        />
         {toast && <div className="toast">{toast}</div>}
       </div>
     </main>
@@ -1283,7 +1292,23 @@ function ConfirmBox({ icon, title, body, cancelLabel = "취소", confirmLabel, d
 }
 
 function BookCover({ book }: { book: Book }) {
-  return <Image className="book-cover" src={book.cover} alt={`${book.title} 표지`} width={120} height={170} unoptimized />;
+  const [src, setSrc] = useState(book.cover || createBookCoverFallback(book.title));
+
+  useEffect(() => {
+    setSrc(book.cover || createBookCoverFallback(book.title));
+  }, [book.cover, book.title]);
+
+  return (
+    <Image
+      className="book-cover"
+      src={src}
+      alt={`${book.title} 표지`}
+      width={120}
+      height={170}
+      unoptimized
+      onError={() => setSrc(createBookCoverFallback(book.title))}
+    />
+  );
 }
 
 function UserAvatar({ value }: { value: string }) {
@@ -1336,4 +1361,19 @@ function mergeBooks(baseBooks: Book[], nextBooks: Book[]) {
     merged.set(book.id, book);
   });
   return Array.from(merged.values());
+}
+
+function createBookCoverFallback(title: string) {
+  const safeTitle = title.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="240" height="340" viewBox="0 0 240 340">
+      <rect width="240" height="340" rx="18" fill="#fff4d4"/>
+      <rect x="22" y="22" width="196" height="296" rx="14" fill="#ffffff" stroke="#ffb21a" stroke-width="4"/>
+      <text x="120" y="142" text-anchor="middle" font-size="48">📚</text>
+      <text x="120" y="198" text-anchor="middle" font-family="sans-serif" font-size="24" font-weight="700" fill="#6f6252">${safeTitle.slice(0, 10)}</text>
+      <text x="120" y="232" text-anchor="middle" font-family="sans-serif" font-size="18" fill="#ffb21a">책모락</text>
+    </svg>
+  `;
+
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
