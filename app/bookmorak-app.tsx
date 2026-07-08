@@ -25,7 +25,7 @@ import {
   X
 } from "lucide-react";
 import { books, genres, recentSearches, reviews as initialReviews, type Book, type Review } from "./data";
-import { supabaseUrl } from "@/lib/supabase";
+import { supabase, supabaseUrl } from "@/lib/supabase";
 import { BESTSELLER_PREVIEW } from "@/lib/bestseller-isbn13";
 import {
   createReview,
@@ -99,12 +99,51 @@ export function BookmorakApp() {
   useEffect(() => {
     let isMounted = true;
 
+    async function enterAuthenticatedApp() {
+      if (!isMounted) return;
+
+      setScreen("home");
+
+      try {
+        const nextProfile = await getCurrentProfile();
+        if (isMounted && nextProfile) {
+          setProfile(nextProfile);
+        }
+      } catch {
+        // The product should still be usable when OAuth succeeds before the profile row is ready.
+      }
+    }
+
+    const {
+      data: { subscription }
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "SIGNED_OUT") {
+        setProfile(null);
+        setScreen("start");
+        return;
+      }
+
+      if (session?.user) {
+        enterAuthenticatedApp();
+      }
+    });
+
     async function bootstrap() {
       try {
-        const currentProfile = await getCurrentProfile();
+        const {
+          data: { session }
+        } = await supabase.auth.getSession();
+        if (session?.user) {
+          setScreen("home");
+        }
+
+        const currentProfile = session?.user ? await getCurrentProfile().catch(() => null) : null;
         if (!isMounted) return;
 
         setProfile(currentProfile);
+        if (session?.user || currentProfile) {
+          setScreen("home");
+        }
 
         const featuredIsbn13 = await listFeaturedBookIsbn13().catch(() => []);
         const [fixedBooks, dbBooks, dbFollows, dbReviews] = await Promise.all([
@@ -131,6 +170,7 @@ export function BookmorakApp() {
 
     return () => {
       isMounted = false;
+      subscription.unsubscribe();
     };
   }, []);
 
@@ -340,6 +380,7 @@ export function BookmorakApp() {
         {screen === "start" && <StartScreen onStart={() => setScreen("onboarding")} onLogin={() => setScreen("login")} />}
         {screen === "onboarding" && (
           <OnboardingScreen
+            bookCatalog={liveBooks}
             selectedBooks={selectedBooks}
             selectedGenre={selectedGenre}
             onBack={() => setScreen("start")}
@@ -350,6 +391,7 @@ export function BookmorakApp() {
         )}
         {screen === "preview" && (
           <PreviewScreen
+            bookCatalog={liveBooks}
             selectedBooks={selectedBooks}
             onBack={() => setScreen("onboarding")}
             onAdd={() => setScreen("onboarding")}
@@ -363,7 +405,13 @@ export function BookmorakApp() {
             showToast("카카오 로그인 설정을 확인해주세요.");
           }
         }} onSignup={() => setScreen("signup")} />}
-        {screen === "signup" && <SignupScreen onBack={() => setScreen("preview")} onDone={handleSignup} onTerms={() => { setPolicyReturn("signup"); setScreen("terms"); }} onPrivacy={() => { setPolicyReturn("signup"); setScreen("privacy"); }} />}
+        {screen === "signup" && <SignupScreen onBack={() => setScreen("preview")} onKakaoLogin={async () => {
+          try {
+            await signInWithKakao();
+          } catch {
+            showToast("카카오 로그인 설정을 확인해주세요.");
+          }
+        }} onDone={handleSignup} onTerms={() => { setPolicyReturn("signup"); setScreen("terms"); }} onPrivacy={() => { setPolicyReturn("signup"); setScreen("privacy"); }} />}
         {screen === "home" && (
           <AppFrame active="home" onNavigate={setScreen}>
             <HomeScreen
@@ -807,19 +855,24 @@ function WriteScreen({ book, rating, body, onBack, onRating, onBody, onSubmit, o
 
 function MyPageScreen({ reviews, profile, bookCatalog, followingCount, onSettings, onProfile, onFollowing, onBook, onPost, onMore, onToast }: { reviews: Review[]; profile: Profile | null; bookCatalog: Book[]; followingCount: number; onSettings: () => void; onProfile: () => void; onFollowing: () => void; onBook: (bookId: string) => void; onPost: (postId: string) => void; onMore: (postId: string) => void; onToast: (message: string) => void }) {
   return (
-    <section className="screen">
+    <section className="screen mypage-screen">
       <Header title="마이페이지" right={<button className="settings-button" onClick={onSettings}><Settings /></button>} />
       <div className="profile-summary">
-        <div className="avatar large">{profile?.avatar_url ? <Image src={profile.avatar_url} alt="프로필 이미지" width={104} height={104} unoptimized /> : currentUser.avatar}</div>
+        <div className="profile-left">
+          <div className="avatar large">{profile?.avatar_url ? <Image src={profile.avatar_url} alt="프로필 이미지" width={104} height={104} unoptimized /> : currentUser.avatar}</div>
+          <button onClick={onProfile}>프로필 편집</button>
+        </div>
         <div className="profile-copy">
           <strong>{profile?.nickname ?? currentUser.name}{profile?.tag ? `#${profile.tag}` : currentUser.tag}</strong>
           <p>{profile?.bio ?? currentUser.intro}</p>
+          <div className="profile-stats">
+            <strong>{reviews.length}<span>게시글</span></strong>
+            <button onClick={onFollowing}>
+              <strong>{followingCount}</strong>
+              <span>팔로잉</span>
+            </button>
+          </div>
         </div>
-      </div>
-      <div className="profile-stats">
-        <button onClick={onProfile}>프로필 편집</button>
-        <strong>{reviews.length}<span>게시글</span></strong>
-        <strong onClick={onFollowing}>{followingCount}<span>팔로잉</span></strong>
       </div>
       <h2>게시글</h2>
       {reviews.map((review) => (
@@ -832,15 +885,16 @@ function MyPageScreen({ reviews, profile, bookCatalog, followingCount, onSetting
           onLike={() => onToast("내 게시글에도 좋아요를 남겼어요.")}
           onMore={() => onMore(review.id)}
           onToast={onToast}
+          variant="mypage"
         />
       ))}
     </section>
   );
 }
 
-function ReviewCard({ review, book, liked = false, compact = false, onBook, onPost, onLike, onMore, onToast }: { review: Review; book: Book; liked?: boolean; compact?: boolean; onBook: () => void; onPost: () => void; onLike: () => void; onMore?: () => void; onToast: (message: string) => void }) {
+function ReviewCard({ review, book, liked = false, compact = false, variant, onBook, onPost, onLike, onMore, onToast }: { review: Review; book: Book; liked?: boolean; compact?: boolean; variant?: "mypage"; onBook: () => void; onPost: () => void; onLike: () => void; onMore?: () => void; onToast: (message: string) => void }) {
   return (
-    <article className={compact ? "review-card compact-card" : "review-card"}>
+    <article className={[compact ? "review-card compact-card" : "review-card", variant === "mypage" ? "mypage-review-card" : ""].filter(Boolean).join(" ")}>
       {!compact && (
         <button className="book-strip" onClick={onBook}>
           <BookCover book={book} />
@@ -875,8 +929,8 @@ function ReviewCard({ review, book, liked = false, compact = false, onBook, onPo
   );
 }
 
-function OnboardingScreen({ selectedBooks, selectedGenre, onBack, onGenre, onToggleBook, onNext }: { selectedBooks: string[]; selectedGenre: string; onBack: () => void; onGenre: (genre: string) => void; onToggleBook: (bookId: string) => void; onNext: () => void }) {
-  const visibleBooks = books.filter((book) => selectedGenre === "전체" || book.genres.includes(selectedGenre));
+function OnboardingScreen({ bookCatalog, selectedBooks, selectedGenre, onBack, onGenre, onToggleBook, onNext }: { bookCatalog: Book[]; selectedBooks: string[]; selectedGenre: string; onBack: () => void; onGenre: (genre: string) => void; onToggleBook: (bookId: string) => void; onNext: () => void }) {
+  const visibleBooks = bookCatalog.filter((book) => selectedGenre === "전체" || book.genres.includes(selectedGenre));
 
   return (
     <section className="scroll-content screen">
@@ -890,7 +944,7 @@ function OnboardingScreen({ selectedBooks, selectedGenre, onBack, onGenre, onTog
           </button>
         ))}
       </div>
-      <div className="book-list">
+      <div className="book-list onboarding-book-list">
         {visibleBooks.map((book) => (
           <button key={book.id} className={selectedBooks.includes(book.id) ? "book-row picked" : "book-row"} onClick={() => onToggleBook(book.id)}>
             <BookCover book={book} />
@@ -913,8 +967,8 @@ function OnboardingScreen({ selectedBooks, selectedGenre, onBack, onGenre, onTog
   );
 }
 
-function PreviewScreen({ selectedBooks, onBack, onAdd, onSignup }: { selectedBooks: string[]; onBack: () => void; onAdd: () => void; onSignup: () => void }) {
-  const selected = books.filter((book) => selectedBooks.includes(book.id));
+function PreviewScreen({ bookCatalog, selectedBooks, onBack, onAdd, onSignup }: { bookCatalog: Book[]; selectedBooks: string[]; onBack: () => void; onAdd: () => void; onSignup: () => void }) {
+  const selected = bookCatalog.filter((book) => selectedBooks.includes(book.id));
   const previewReviews = initialReviews.filter((review) => selectedBooks.includes(review.bookId));
 
   return (
@@ -955,7 +1009,7 @@ function LoginScreen({ onBack, onLogin, onKakaoLogin, onSignup }: { onBack: () =
   );
 }
 
-function SignupScreen({ onBack, onDone, onTerms, onPrivacy }: { onBack: () => void; onDone: (email: string, password: string, nickname: string) => void; onTerms: () => void; onPrivacy: () => void }) {
+function SignupScreen({ onBack, onKakaoLogin, onDone, onTerms, onPrivacy }: { onBack: () => void; onKakaoLogin: () => void; onDone: (email: string, password: string, nickname: string) => void; onTerms: () => void; onPrivacy: () => void }) {
   const [name, setName] = useState("");
   const [agree, setAgree] = useState(false);
   const [email, setEmail] = useState("");
@@ -981,8 +1035,10 @@ function SignupScreen({ onBack, onDone, onTerms, onPrivacy }: { onBack: () => vo
   if (stage === "email") {
     return (
       <section className="screen auth-screen">
-        <Header title="이메일로 시작하기" onBack={onBack} />
+        <Header title="시작하기" onBack={onBack} />
         <LogoText />
+        <button className="social kakao" onClick={onKakaoLogin}>카카오로 시작하기</button>
+        <div className="auth-divider"><span />이메일로 시작하기<span /></div>
         <label className="field"><span>이메일</span><input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="이메일을 입력해주세요" /></label>
         <label className="agree"><input type="checkbox" checked={agree} onChange={(event) => setAgree(event.target.checked)} /> 전체 동의합니다.</label>
         <button className="policy-row" onClick={onTerms}>[필수] 이용 약관 동의 <ChevronRight /></button>

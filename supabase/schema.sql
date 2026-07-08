@@ -175,6 +175,10 @@ alter table public.reports enable row level security;
 drop policy if exists "profiles are readable" on public.profiles;
 create policy "profiles are readable" on public.profiles for select using (true);
 
+drop policy if exists "users create their profile" on public.profiles;
+create policy "users create their profile" on public.profiles for insert
+with check (auth_user_id = auth.uid());
+
 drop policy if exists "users update their profile" on public.profiles;
 create policy "users update their profile" on public.profiles for update
 using (auth_user_id = auth.uid())

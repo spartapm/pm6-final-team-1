@@ -66,7 +66,7 @@ export type AladinBook = Book & {
   categoryName?: string;
 };
 
-const fallbackCover = "https://placehold.co/240x340/fff4d4/ffb21a?text=Book";
+const fallbackCover = "";
 
 export async function getCurrentProfile() {
   const {
@@ -77,13 +77,43 @@ export async function getCurrentProfile() {
     return null;
   }
 
-  const { data, error } = await supabase.from("profiles").select("*").eq("auth_user_id", session.user.id).single();
+  const { data, error } = await supabase.from("profiles").select("*").eq("auth_user_id", session.user.id).maybeSingle();
 
   if (error) {
     throw error;
   }
 
-  return data as Profile;
+  if (data) {
+    return data as Profile;
+  }
+
+  const metadata = session.user.user_metadata ?? {};
+  const nickname =
+    (metadata.nickname as string | undefined) ||
+    (metadata.name as string | undefined) ||
+    (metadata.full_name as string | undefined) ||
+    "독서광";
+  const avatarUrl =
+    (metadata.avatar_url as string | undefined) ||
+    (metadata.picture as string | undefined) ||
+    null;
+
+  const { data: createdProfile } = await supabase
+    .from("profiles")
+    .upsert(
+      {
+        auth_user_id: session.user.id,
+        email: session.user.email ?? "",
+        nickname,
+        avatar_url: avatarUrl,
+        tag: String(Math.floor(Math.random() * 10000)).padStart(4, "0")
+      },
+      { onConflict: "auth_user_id" }
+    )
+    .select("*")
+    .maybeSingle();
+
+  return createdProfile as Profile | null;
 }
 
 export async function signInWithEmail(email: string, password: string) {
@@ -336,7 +366,7 @@ function mapAladinItemToBook(item: AladinItem): AladinBook {
     id,
     title: item.title ?? "제목 없음",
     author: item.author ?? "저자 미상",
-    cover: item.cover || fallbackCover,
+    cover: normalizeCoverUrl(item.cover),
     rating: item.customerReviewRank ? Math.round((item.customerReviewRank / 2) * 10) / 10 : 0,
     followers: 0,
     genres: [genre],
@@ -358,12 +388,20 @@ function mapBookRow(row: BookRow): Book {
     id: row.id,
     title: row.title ?? row.aladin_isbn13 ?? row.id,
     author: row.author ?? "알라딘 API 실시간 조회 대상",
-    cover: row.cover_url || fallbackCover,
+    cover: normalizeCoverUrl(row.cover_url ?? undefined),
     rating: Math.round(average * 10) / 10,
     followers: row.book_follows?.length ?? 0,
     genres: row.genres?.length ? row.genres : [row.aladin_category_name ?? "도서"],
     description: row.description || "책 소개를 불러오지 못했습니다."
   };
+}
+
+function normalizeCoverUrl(cover?: string) {
+  if (!cover) {
+    return fallbackCover;
+  }
+
+  return cover.startsWith("http://") ? `https://${cover.slice("http://".length)}` : cover;
 }
 
 function mapReviewRow(row: ReviewRow): Review {
