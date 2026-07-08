@@ -13,8 +13,8 @@ export type Profile = {
 
 type BookRow = {
   id: string;
-  title: string;
-  author: string;
+  title: string | null;
+  author: string | null;
   cover_url: string | null;
   description: string | null;
   genres: string[] | null;
@@ -153,7 +153,7 @@ export async function uploadProfileImage(authUserId: string, file: File) {
 
 export async function fetchAladinBooks(query: string, mode: "search" | "bestseller" = "search") {
   const params = new URLSearchParams({ mode, query });
-  const response = await fetch(`/api/aladin?${params.toString()}`);
+  const response = await fetch(`/api/aladin?${params.toString()}`, { cache: "no-store" });
 
   if (!response.ok) {
     throw new Error("알라딘 도서 API 호출에 실패했습니다.");
@@ -163,9 +163,31 @@ export async function fetchAladinBooks(query: string, mode: "search" | "bestsell
   return ((data.item ?? []) as AladinItem[]).map(mapAladinItemToBook);
 }
 
+export async function listFeaturedBookIsbn13() {
+  const { data, error } = await supabase.from("featured_book_isbns").select("isbn13");
+  if (error) throw error;
+  return (data ?? []).map((row) => row.isbn13 as string);
+}
+
+export async function fetchFixedBestsellerBooks(limit = 24, isbn13List: string[] = []) {
+  const params = new URLSearchParams({ mode: "fixed-bestsellers", limit: String(limit) });
+  if (isbn13List.length > 0) {
+    params.set("isbn13", isbn13List.join(","));
+  }
+
+  const response = await fetch(`/api/aladin?${params.toString()}`, { cache: "no-store" });
+
+  if (!response.ok) {
+    throw new Error("고정 도서 리스트 호출에 실패했습니다.");
+  }
+
+  const data = await response.json();
+  return ((data.item ?? []) as AladinItem[]).map(mapAladinItemToBook);
+}
+
 export async function fetchAladinBookDetail(bookId: string) {
   const params = new URLSearchParams({ mode: "lookup", itemId: bookId });
-  const response = await fetch(`/api/aladin?${params.toString()}`);
+  const response = await fetch(`/api/aladin?${params.toString()}`, { cache: "no-store" });
 
   if (!response.ok) {
     throw new Error("알라딘 도서 상세 API 호출에 실패했습니다.");
@@ -178,22 +200,14 @@ export async function fetchAladinBookDetail(bookId: string) {
 
 export async function upsertBook(book: AladinBook | Book) {
   const aladinBook = book as AladinBook;
+  const isbn13 = aladinBook.isbn13 || (book.id.length === 13 ? book.id : null);
   const { data, error } = await supabase
     .from("books")
     .upsert(
       {
-        id: aladinBook.isbn13 || aladinBook.isbn || book.id,
-        title: book.title,
-        author: book.author,
-        cover_url: book.cover,
-        description: book.description,
-        genres: book.genres,
-        publisher: aladinBook.publisher ?? null,
-        pub_date: aladinBook.pubDate ?? null,
+        id: isbn13 || aladinBook.isbn || book.id,
         aladin_isbn: aladinBook.isbn ?? null,
-        aladin_isbn13: aladinBook.isbn13 ?? null,
-        aladin_item_id: aladinBook.aladinItemId ?? null,
-        aladin_category_name: aladinBook.categoryName ?? null
+        aladin_isbn13: isbn13
       },
       { onConflict: "id" }
     )
@@ -338,8 +352,8 @@ function mapBookRow(row: BookRow): Book {
 
   return {
     id: row.id,
-    title: row.title,
-    author: row.author,
+    title: row.title ?? row.aladin_isbn13 ?? row.id,
+    author: row.author ?? "알라딘 API 실시간 조회 대상",
     cover: row.cover_url || fallbackCover,
     rating: Math.round(average * 10) / 10,
     followers: row.book_follows?.length ?? 0,

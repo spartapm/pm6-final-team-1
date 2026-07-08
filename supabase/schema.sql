@@ -14,8 +14,8 @@ create table if not exists public.profiles (
 
 create table if not exists public.books (
   id text primary key,
-  title text not null,
-  author text not null,
+  title text,
+  author text,
   cover_url text,
   description text,
   genres text[] not null default '{}',
@@ -28,6 +28,13 @@ create table if not exists public.books (
   aladin_category_name text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
+);
+
+alter table public.books alter column title drop not null;
+alter table public.books alter column author drop not null;
+
+create table if not exists public.featured_book_isbns (
+  isbn13 text primary key check (isbn13 ~ '^[0-9]{13}$')
 );
 
 create table if not exists public.book_follows (
@@ -157,6 +164,7 @@ create trigger comments_touch_updated_at before update on public.comments
 
 alter table public.profiles enable row level security;
 alter table public.books enable row level security;
+alter table public.featured_book_isbns enable row level security;
 alter table public.book_follows enable row level security;
 alter table public.reviews enable row level security;
 alter table public.review_likes enable row level security;
@@ -174,6 +182,9 @@ with check (auth_user_id = auth.uid());
 
 drop policy if exists "books are readable" on public.books;
 create policy "books are readable" on public.books for select using (true);
+
+drop policy if exists "featured book isbns are readable" on public.featured_book_isbns;
+create policy "featured book isbns are readable" on public.featured_book_isbns for select using (true);
 
 drop policy if exists "authenticated users can upsert books" on public.books;
 create policy "authenticated users can upsert books" on public.books for insert
@@ -294,3 +305,107 @@ create index if not exists reviews_user_created_idx on public.reviews (user_id, 
 create index if not exists review_likes_review_idx on public.review_likes (review_id);
 create index if not exists comments_review_created_idx on public.comments (review_id, created_at asc);
 create index if not exists comment_likes_comment_idx on public.comment_likes (comment_id);
+
+insert into public.featured_book_isbns (isbn13)
+values
+  ('9788936434120'),
+  ('9788925588735'),
+  ('9791194530701'),
+  ('9788937460586'),
+  ('9788954682152'),
+  ('9791199305304'),
+  ('9788937473401'),
+  ('9791192372730'),
+  ('9791191114768'),
+  ('9791124248171'),
+  ('9791193506516'),
+  ('9788937461798'),
+  ('9788925554990'),
+  ('9791124038413'),
+  ('9791172134297'),
+  ('9791192559100'),
+  ('9791199383074'),
+  ('9791155819227'),
+  ('9791130646381'),
+  ('9791199496651'),
+  ('9791197221989'),
+  ('9788932043562'),
+  ('9791173323027'),
+  ('9791187232629'),
+  ('9788937460883'),
+  ('9791199489530'),
+  ('9791162544327'),
+  ('9791141603250'),
+  ('9788936439965'),
+  ('9791193401583'),
+  ('9791124497029'),
+  ('9788936439880'),
+  ('9788937460708'),
+  ('9791173578601'),
+  ('9791175773370'),
+  ('9791173579721'),
+  ('9791194368175'),
+  ('9788954646079'),
+  ('9791141603373'),
+  ('9791141617226'),
+  ('9791167372864'),
+  ('9791194330424'),
+  ('9791193238691'),
+  ('9791167742063'),
+  ('9791175773387'),
+  ('9791198547514'),
+  ('9791175773394'),
+  ('9791170612759'),
+  ('9791191043297'),
+  ('9791141602024'),
+  ('9791192300818'),
+  ('9791198754080'),
+  ('9788962626605'),
+  ('9791159921445'),
+  ('9788954616515'),
+  ('9791193842287'),
+  ('9791139728002'),
+  ('9791167740984'),
+  ('9791199555112'),
+  ('9788954651134'),
+  ('9791193153710'),
+  ('9791124638002'),
+  ('9791141615055'),
+  ('9791194530398'),
+  ('9788937460616'),
+  ('9791141602383'),
+  ('9791175780170'),
+  ('9791141601300'),
+  ('9791194374299'),
+  ('9791168343108'),
+  ('9791192389233'),
+  ('9791139716146'),
+  ('9791168341890'),
+  ('9788936439651'),
+  ('9791167903662'),
+  ('9788954699075'),
+  ('9791169851626'),
+  ('9791199242531'),
+  ('9791124038192'),
+  ('9791194413394'),
+  ('9788937462146'),
+  ('9791190669030'),
+  ('9791193904152'),
+  ('9788960909878'),
+  ('9791193078709'),
+  ('9791199624993'),
+  ('9788965138310'),
+  ('9791193262658'),
+  ('9791130674643'),
+  ('9791130698199'),
+  ('9788925573229'),
+  ('9791130681009'),
+  ('9788960909960'),
+  ('9791168343764'),
+  ('9791141603380'),
+  ('9791193939666'),
+  ('9791193939314'),
+  ('9791199040311'),
+  ('9791192097978'),
+  ('9791171175864')
+on conflict (isbn13) do nothing;

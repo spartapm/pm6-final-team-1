@@ -26,11 +26,13 @@ import {
 } from "lucide-react";
 import { books, genres, recentSearches, reviews as initialReviews, type Book, type Review } from "./data";
 import { supabaseUrl } from "@/lib/supabase";
+import { BESTSELLER_PREVIEW } from "@/lib/bestseller-isbn13";
 import {
   createReview,
   deleteReview,
-  fetchAladinBooks,
+  fetchFixedBestsellerBooks,
   getCurrentProfile,
+  listFeaturedBookIsbn13,
   listBooks,
   listFeedReviews,
   listFollowingBookIds,
@@ -58,15 +60,26 @@ const currentUser = {
   avatar: "🦆"
 };
 
+const fixedBookPreviews: Book[] = BESTSELLER_PREVIEW.map((book) => ({
+  id: book.isbn13,
+  title: book.title,
+  author: book.author,
+  cover: "",
+  rating: 0,
+  followers: 0,
+  genres: [book.genre],
+  description: "알라딘 API에서 책 소개를 실시간으로 불러오는 중입니다."
+}));
+
 export function BookmorakApp() {
   const [screen, setScreen] = useState<Screen>("start");
-  const [activeBookId, setActiveBookId] = useState(books[0].id);
+  const [activeBookId, setActiveBookId] = useState(fixedBookPreviews[0].id);
   const [activePostId, setActivePostId] = useState(initialReviews[0].id);
   const [query, setQuery] = useState("");
   const [selectedGenre, setSelectedGenre] = useState("전체");
-  const [liveBooks, setLiveBooks] = useState<Book[]>(books);
-  const [selectedBooks, setSelectedBooks] = useState<string[]>(["honmono", "continue"]);
-  const [following, setFollowing] = useState<string[]>(["honmono", "continue", "store"]);
+  const [liveBooks, setLiveBooks] = useState<Book[]>(fixedBookPreviews);
+  const [selectedBooks, setSelectedBooks] = useState<string[]>(fixedBookPreviews.slice(0, 2).map((book) => book.id));
+  const [following, setFollowing] = useState<string[]>(fixedBookPreviews.slice(0, 3).map((book) => book.id));
   const [likedPosts, setLikedPosts] = useState<string[]>([]);
   const [reviews, setReviews] = useState<Review[]>(initialReviews);
   const [draftRating, setDraftRating] = useState(0);
@@ -77,7 +90,7 @@ export function BookmorakApp() {
   const [sortBy, setSortBy] = useState<"latest" | "popular">("latest");
   const [policyReturn, setPolicyReturn] = useState<Screen>("settings");
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [isSyncing, setIsSyncing] = useState(false);
+  const isSyncing = false;
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const activeBook = liveBooks.find((book) => book.id === activeBookId) ?? books.find((book) => book.id === activeBookId) ?? liveBooks[0] ?? books[0];
@@ -93,14 +106,20 @@ export function BookmorakApp() {
 
         setProfile(currentProfile);
 
-        const [dbBooks, dbFollows, dbReviews] = await Promise.all([
+        const featuredIsbn13 = await listFeaturedBookIsbn13().catch(() => []);
+        const [fixedBooks, dbBooks, dbFollows, dbReviews] = await Promise.all([
+          fetchFixedBestsellerBooks(100, featuredIsbn13).catch(() => []),
           listBooks().catch(() => []),
           currentProfile ? listFollowingBookIds(currentProfile.id).catch(() => []) : Promise.resolve([]),
           listFeedReviews().catch(() => [])
         ]);
 
         if (!isMounted) return;
-        if (dbBooks.length > 0) setLiveBooks(mergeBooks(books, dbBooks));
+        if (fixedBooks.length > 0) {
+          setLiveBooks(mergeBooks(dbBooks, fixedBooks));
+        } else if (dbBooks.length > 0) {
+          setLiveBooks(mergeBooks(fixedBookPreviews, dbBooks));
+        }
         if (dbFollows.length > 0) setFollowing(dbFollows);
         if (dbReviews.length > 0) setReviews(dbReviews);
       } catch {
@@ -114,26 +133,6 @@ export function BookmorakApp() {
       isMounted = false;
     };
   }, []);
-
-  useEffect(() => {
-    if (!query.trim()) return;
-
-    const timer = window.setTimeout(async () => {
-      setIsSyncing(true);
-      try {
-        const aladinBooks = await fetchAladinBooks(query);
-        if (aladinBooks.length > 0) {
-          setLiveBooks((prev) => mergeBooks(prev, aladinBooks));
-        }
-      } catch {
-        showToast("알라딘 검색 API 호출에 실패했습니다.");
-      } finally {
-        setIsSyncing(false);
-      }
-    }, 450);
-
-    return () => window.clearTimeout(timer);
-  }, [query]);
 
   const filteredBooks = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -948,8 +947,6 @@ function LoginScreen({ onBack, onLogin, onKakaoLogin, onSignup }: { onBack: () =
       <Header title="로그인" onBack={onBack} />
       <LogoText />
       <button className="social kakao" onClick={onKakaoLogin}>카카오로 로그인</button>
-      <button className="social">Google로 로그인</button>
-      <button className="social dark">Apple로 로그인</button>
       <label className="field"><span>이메일</span><input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="이메일을 입력해주세요" /></label>
       <label className="field"><span>비밀번호</span><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="비밀번호를 입력해주세요" /></label>
       <button className={email && password ? "primary-button" : "primary-button disabled"} onClick={() => onLogin(email, password)}>로그인 하기</button>
