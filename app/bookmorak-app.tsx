@@ -155,21 +155,29 @@ export function BookmorakApp() {
           setScreen("home");
         }
 
-        const [fixedBooks, dbBooks, dbFollows, dbReviews] = await Promise.all([
-          fetchFixedBestsellerBooks(100, [...BESTSELLER_ISBN13]).catch(() => []),
+        const [firstPageBooks, dbBooks, dbFollows, dbReviews] = await Promise.all([
+          fetchFixedBestsellerBooks(24).catch(() => []),
           listBooks().catch(() => []),
           currentProfile ? listFollowingBookIds(currentProfile.id).catch(() => []) : Promise.resolve([]),
           listFeedReviews().catch(() => [])
         ]);
 
         if (!isMounted) return;
-        if (fixedBooks.length > 0) {
-          setLiveBooks(mergeBooks(dbBooks, fixedBooks));
-        } else if (dbBooks.length > 0) {
-          setLiveBooks(mergeBooks(fixedBookPreviews, dbBooks));
-        }
+        // Keep fixed bestseller order, then overlay DB + Aladin details.
+        setLiveBooks(mergeBooks(fixedBookPreviews, [...dbBooks, ...firstPageBooks]));
         if (dbFollows.length > 0) setFollowing(dbFollows);
         if (dbReviews.length > 0) setReviews(dbReviews);
+
+        // Load remaining bestsellers in the background so the first screen is not blocked.
+        const remainingLimit = Math.max(BESTSELLER_ISBN13.length - 24, 0);
+        if (remainingLimit > 0) {
+          fetchFixedBestsellerBooks(remainingLimit, [], 24)
+            .then((restBooks) => {
+              if (!isMounted || restBooks.length === 0) return;
+              setLiveBooks((prev) => mergeBooks(prev, restBooks));
+            })
+            .catch(() => undefined);
+        }
       } catch {
         showToast("Supabase 연결 전까지 샘플 데이터로 표시합니다.");
       }
@@ -211,11 +219,11 @@ export function BookmorakApp() {
   }, [activeBook.id, reviews, sortBy]);
 
   useEffect(() => {
-    if (screen !== "search") return;
+    if (screen !== "search" && screen !== "home") return;
 
     const coverlessBooks = filteredBooks
-      .filter((book) => !book.cover && !prefetchedBookIdsRef.current.has(book.id))
-      .slice(0, 12);
+      .filter((book) => (!book.cover || book.rating === 0) && !prefetchedBookIdsRef.current.has(book.id))
+      .slice(0, 18);
 
     if (coverlessBooks.length === 0) return;
 
@@ -1483,10 +1491,40 @@ function formatCount(count: number) {
 
 function mergeBooks(baseBooks: Book[], nextBooks: Book[]) {
   const merged = new Map<string, Book>();
+
   [...baseBooks, ...nextBooks].forEach((book) => {
-    merged.set(book.id, book);
+    const previous = merged.get(book.id);
+    if (!previous) {
+      merged.set(book.id, book);
+      return;
+    }
+
+    merged.set(book.id, {
+      ...previous,
+      ...book,
+      cover: book.cover || previous.cover,
+      rating: book.rating > 0 ? book.rating : previous.rating,
+      description:
+        book.description && book.description !== "책 소개를 불러오지 못했습니다."
+          ? book.description
+          : previous.description,
+      genres: preferUiGenres(book.genres, previous.genres)
+    });
   });
+
   return Array.from(merged.values());
+}
+
+const UI_GENRES = new Set(["소설", "에세이", "자기계발", "판타지", "동화", "힐링"]);
+
+function preferUiGenres(nextGenres: string[] = [], previousGenres: string[] = []) {
+  const nextUseful = nextGenres.filter((genre) => UI_GENRES.has(genre));
+  if (nextUseful.length > 0) return Array.from(new Set(nextUseful));
+
+  const previousUseful = previousGenres.filter((genre) => UI_GENRES.has(genre));
+  if (previousUseful.length > 0) return Array.from(new Set(previousUseful));
+
+  return nextGenres.length > 0 ? nextGenres : previousGenres;
 }
 
 function createBookCoverFallback(title: string) {

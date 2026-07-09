@@ -1,5 +1,6 @@
 import { supabase } from "./supabase";
 import type { Book, Review } from "@/app/data";
+import { aladinCacheKey, readAladinCache, writeAladinCache } from "./aladin-cache";
 
 export type Profile = {
   id: string;
@@ -186,6 +187,12 @@ export async function uploadProfileImage(authUserId: string, file: File) {
 }
 
 export async function fetchAladinBooks(query: string, mode: "search" | "bestseller" = "search") {
+  const cacheKey = aladinCacheKey([mode, query || "베스트셀러"]);
+  const cached = readAladinCache<AladinBook[]>(cacheKey);
+  if (cached?.length) {
+    return cached;
+  }
+
   const params = new URLSearchParams({ mode, query });
   const response = await fetch(`/api/aladin?${params.toString()}`, { cache: "no-store" });
 
@@ -194,7 +201,11 @@ export async function fetchAladinBooks(query: string, mode: "search" | "bestsell
   }
 
   const data = await response.json();
-  return ((data.item ?? []) as AladinItem[]).map(mapAladinItemToBook);
+  const books = ((data.item ?? []) as AladinItem[]).map(mapAladinItemToBook);
+  if (books.length > 0) {
+    writeAladinCache(cacheKey, books);
+  }
+  return books;
 }
 
 export async function listFeaturedBookIsbn13() {
@@ -203,9 +214,26 @@ export async function listFeaturedBookIsbn13() {
   return (data ?? []).map((row) => row.isbn13 as string);
 }
 
-export async function fetchFixedBestsellerBooks(limit = 24, isbn13List: string[] = []) {
-  const params = new URLSearchParams({ mode: "fixed-bestsellers", limit: String(limit) });
-  if (isbn13List.length > 0) {
+export async function fetchFixedBestsellerBooks(limit = 24, isbn13List: string[] = [], offset = 0) {
+  const cacheKey = aladinCacheKey([
+    "fixed-bestsellers",
+    offset,
+    limit,
+    isbn13List.length > 0 && isbn13List.length <= 24 ? isbn13List.join(",") : "default"
+  ]);
+  const cached = readAladinCache<AladinBook[]>(cacheKey);
+  if (cached?.length) {
+    return cached;
+  }
+
+  const params = new URLSearchParams({
+    mode: "fixed-bestsellers",
+    limit: String(limit),
+    offset: String(offset)
+  });
+  // Prefer server-side BESTSELLER_ISBN13 to avoid huge query strings.
+  // Only pass an explicit list when a custom subset is required.
+  if (isbn13List.length > 0 && isbn13List.length <= 24) {
     params.set("isbn13", isbn13List.join(","));
   }
 
@@ -216,10 +244,20 @@ export async function fetchFixedBestsellerBooks(limit = 24, isbn13List: string[]
   }
 
   const data = await response.json();
-  return ((data.item ?? []) as AladinItem[]).map(mapAladinItemToBook);
+  const books = ((data.item ?? []) as AladinItem[]).map(mapAladinItemToBook);
+  if (books.length > 0) {
+    writeAladinCache(cacheKey, books);
+  }
+  return books;
 }
 
 export async function fetchAladinBookDetail(bookId: string) {
+  const cacheKey = aladinCacheKey(["lookup", bookId]);
+  const cached = readAladinCache<AladinBook>(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
   const params = new URLSearchParams({ mode: "lookup", itemId: bookId });
   const response = await fetch(`/api/aladin?${params.toString()}`, { cache: "no-store" });
 
@@ -229,7 +267,11 @@ export async function fetchAladinBookDetail(bookId: string) {
 
   const data = await response.json();
   const item = (data.item ?? [])[0] as AladinItem | undefined;
-  return item ? mapAladinItemToBook(item) : null;
+  const book = item ? mapAladinItemToBook(item) : null;
+  if (book) {
+    writeAladinCache(cacheKey, book);
+  }
+  return book;
 }
 
 export async function upsertBook(book: AladinBook | Book) {
@@ -366,8 +408,6 @@ function reviewSelect() {
 
 function mapAladinItemToBook(item: AladinItem): AladinBook {
   const id = item.isbn13 || item.isbn || String(item.itemId ?? item.title ?? crypto.randomUUID());
-  const categoryParts = item.categoryName?.split(">") ?? [];
-  const genre = categoryParts.at(-1)?.trim() || "도서";
 
   return {
     id,
@@ -376,7 +416,7 @@ function mapAladinItemToBook(item: AladinItem): AladinBook {
     cover: normalizeCoverUrl(item.cover),
     rating: item.customerReviewRank ? Math.round((item.customerReviewRank / 2) * 10) / 10 : 0,
     followers: 0,
-    genres: [genre],
+    genres: mapCategoryToUiGenres(item.categoryName),
     description: item.description || "책 소개를 불러오지 못했습니다.",
     aladinItemId: item.itemId,
     isbn: item.isbn,
@@ -387,9 +427,35 @@ function mapAladinItemToBook(item: AladinItem): AladinBook {
   };
 }
 
+/** Map Aladin category paths onto the UI chip labels (소설, 에세이, ...). */
+export function mapCategoryToUiGenres(categoryName?: string | null): string[] {
+  const text = categoryName ?? "";
+  const matched: string[] = [];
+
+  if (/판타지|무협/.test(text)) matched.push("판타지");
+  else if (/소설|시\/희곡|희곡|과학소설|SF/.test(text)) matched.push("소설");
+
+  if (/에세이/.test(text)) matched.push("에세이");
+  if (/자기계발/.test(text)) matched.push("자기계발");
+  if (/동화|유아|어린이|아동/.test(text)) matched.push("동화");
+  if (/힐링/.test(text)) matched.push("힐링");
+
+  if (matched.length > 0) return matched;
+
+  // Fall back to the last path segment only when it already matches a UI chip.
+  const leaf = text.split(">").at(-1)?.trim() ?? "";
+  const uiGenres = ["소설", "에세이", "자기계발", "판타지", "동화", "힐링"];
+  if (uiGenres.includes(leaf)) return [leaf];
+
+  return ["도서"];
+}
+
 function mapBookRow(row: BookRow): Book {
   const ratings = row.reviews ?? [];
   const average = ratings.length > 0 ? ratings.reduce((sum, review) => sum + review.rating, 0) / ratings.length : 0;
+  const mappedFromCategory = mapCategoryToUiGenres(row.aladin_category_name);
+  const storedGenres = (row.genres ?? []).flatMap((genre) => mapCategoryToUiGenres(genre));
+  const genres = Array.from(new Set([...storedGenres, ...mappedFromCategory])).filter((genre) => genre !== "도서");
 
   return {
     id: row.id,
@@ -398,7 +464,7 @@ function mapBookRow(row: BookRow): Book {
     cover: normalizeCoverUrl(row.cover_url ?? undefined),
     rating: Math.round(average * 10) / 10,
     followers: row.book_follows?.length ?? 0,
-    genres: row.genres?.length ? row.genres : [row.aladin_category_name ?? "도서"],
+    genres: genres.length > 0 ? genres : mappedFromCategory,
     description: row.description || "책 소개를 불러오지 못했습니다."
   };
 }

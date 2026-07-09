@@ -18,8 +18,10 @@ export async function GET(request: NextRequest) {
 
   if (mode === "fixed-bestsellers") {
     const source = requestedIsbn13.length > 0 ? requestedIsbn13 : [...BESTSELLER_ISBN13];
-    const safeLimit = Math.min(Math.max(limit, 1), source.length);
-    const items = await lookupIsbn13Batch(source.slice(0, safeLimit));
+    const offset = Math.max(Number(searchParams.get("offset") ?? "0"), 0);
+    const safeLimit = Math.min(Math.max(limit, 1), 40);
+    const slice = source.slice(offset, offset + safeLimit);
+    const items = await lookupIsbn13Batch(slice);
     return noStoreJson({ item: items.filter(Boolean) });
   }
 
@@ -58,7 +60,7 @@ export async function GET(request: NextRequest) {
   return noStoreJson(data);
 }
 
-async function lookupIsbn13(isbn13: string) {
+async function lookupIsbn13(isbn13: string, attempt = 0): Promise<AladinItem | null> {
   const params = new URLSearchParams({
     ttbkey: ALADIN_API_KEY,
     output: "js",
@@ -69,57 +71,60 @@ async function lookupIsbn13(isbn13: string) {
     ItemIdType: "ISBN13"
   });
 
-  const response = await fetch(`${ALADIN_BASE_URL}/ItemLookUp.aspx?${params.toString()}`, { cache: "no-store" });
+  try {
+    const response = await fetch(`${ALADIN_BASE_URL}/ItemLookUp.aspx?${params.toString()}`, { cache: "no-store" });
+    const text = await response.text();
 
-  if (!response.ok) {
+    if (!response.ok) {
+      if (attempt < 2) {
+        await sleep(250 * (attempt + 1));
+        return lookupIsbn13(isbn13, attempt + 1);
+      }
+      return null;
+    }
+
+    let data: { errorCode?: number; item?: AladinItem[] };
+    try {
+      data = JSON.parse(text);
+    } catch {
+      if (attempt < 2) {
+        await sleep(300 * (attempt + 1));
+        return lookupIsbn13(isbn13, attempt + 1);
+      }
+      return null;
+    }
+
+    if (data.errorCode || !data.item?.[0]) {
+      return null;
+    }
+
+    return data.item[0];
+  } catch {
+    if (attempt < 2) {
+      await sleep(300 * (attempt + 1));
+      return lookupIsbn13(isbn13, attempt + 1);
+    }
     return null;
   }
-
-  const data = await response.json();
-  return data.item?.[0] ?? null;
 }
 
 async function lookupIsbn13Batch(isbn13List: string[]) {
-  const chunks = chunk(isbn13List, 10);
-  const results: AladinItem[] = [];
+  // Aladin ItemLookUp does not support comma-separated ItemId values.
+  // Look up each ISBN13 individually with low concurrency to avoid throttling.
+  const results = new Map<string, AladinItem>();
+  const chunks = chunk(isbn13List, 3);
 
   for (const isbn13Chunk of chunks) {
-    const params = new URLSearchParams({
-      ttbkey: ALADIN_API_KEY,
-      output: "js",
-      Version: "20131101",
-      Cover: "Big",
-      OptResult: "ratingInfo,reviewList,cardReviewImgList",
-      ItemId: isbn13Chunk.join(","),
-      ItemIdType: "ISBN13"
+    const items = await Promise.all(isbn13Chunk.map((isbn13) => lookupIsbn13(isbn13)));
+    items.forEach((item, index) => {
+      if (!item) return;
+      results.set(isbn13Chunk[index], item);
     });
-
-    const response = await fetch(`${ALADIN_BASE_URL}/ItemLookUp.aspx?${params.toString()}`, { cache: "no-store" });
-
-    if (!response.ok) {
-      const fallbackItems = await Promise.all(isbn13Chunk.map((isbn13) => lookupIsbn13(isbn13)));
-      results.push(...fallbackItems.filter(Boolean));
-      continue;
-    }
-
-    const data = await response.json();
-    if (!data.item?.length) {
-      const fallbackItems = await Promise.all(isbn13Chunk.map((isbn13) => lookupIsbn13(isbn13)));
-      results.push(...fallbackItems.filter(Boolean));
-      continue;
-    }
-
-    const batchItems = data.item as AladinItem[];
-    const foundIsbn13 = new Set(batchItems.map((item) => item.isbn13).filter(Boolean));
-    const missingIsbn13 = isbn13Chunk.filter((isbn13) => !foundIsbn13.has(isbn13));
-    const missingItems = await Promise.all(missingIsbn13.map((isbn13) => lookupIsbn13(isbn13)));
-
-    results.push(...batchItems, ...missingItems.filter(Boolean));
+    // Small gap between chunks reduces Aladin rate-limit failures.
+    await sleep(120);
   }
 
-  return isbn13List
-    .map((isbn13) => results.find((item) => item.isbn13 === isbn13))
-    .filter(Boolean);
+  return isbn13List.map((isbn13) => results.get(isbn13)).filter(Boolean);
 }
 
 function chunk<T>(items: T[], size: number) {
@@ -130,6 +135,10 @@ function chunk<T>(items: T[], size: number) {
   }
 
   return chunks;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function noStoreJson(data: unknown, init?: ResponseInit) {
