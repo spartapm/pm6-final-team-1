@@ -31,16 +31,25 @@ import starActiveIcon from "../team-1-icons/(별점) 홈 피드, 책 상세페�
 import likeIcon from "../team-1-icons/(좋아요) 홈 피드, 게시글 상세페이지, 책 상세페이지-글 아래.svg";
 import likeActiveIcon from "../team-1-icons/(좋아요) 홈 피드, 게시글 상세페이지, 책 상세페이지-글 아래-1.svg";
 import commentIcon from "../team-1-icons/(댓글) 홈 피드, 게시글 상세페이지, 책 상세페이지-글 아래.svg";
-import { genres, recentSearches, type Book, type Review } from "./data";
+import startCharacterIcon from "../team-1-icons/캐릭터 일러스트-시작, 로그인.svg";
+import startLogoIcon from "../team-1-icons/로고명.svg";
+import startServiceIcon from "../team-1-icons/서비스명.svg";
+import startBgIcon from "../team-1-icons/image 1 (Traced).svg";
+import { genres, recentSearches as defaultRecentSearches, type Book, type Review } from "./data";
 import { supabase, supabaseUrl } from "@/lib/supabase";
 import { BESTSELLER_ISBN13, BESTSELLER_PREVIEW } from "@/lib/bestseller-isbn13";
 import {
+  createComment,
   createReview,
+  deleteCurrentAccount,
   deleteReview,
   fetchAladinBookDetail,
   fetchFixedBestsellerBooks,
+  formatReviewDate,
   getCurrentProfile,
+  listBookReviews,
   listBooks,
+  listComments,
   listFeedReviews,
   listFollowingBookIds,
   reportReview,
@@ -49,14 +58,36 @@ import {
   signOut,
   signUpWithEmail,
   toggleBookFollow,
+  toggleCommentLike,
   toggleReviewLike,
   updateProfile as updateSupabaseProfile,
+  updateReview,
   uploadProfileImage,
   upsertBook,
+  type CommentItem,
   type Profile
 } from "@/lib/bookmorak-service";
 
-type Screen = "start" | "onboarding" | "preview" | "login" | "signup" | "home" | "notifications" | "search" | "book" | "write" | "mypage" | "following" | "settings" | "terms" | "privacy" | "profile" | "password" | "post";
+type Screen =
+  | "start"
+  | "onboarding"
+  | "preview"
+  | "login"
+  | "signup"
+  | "home"
+  | "notifications"
+  | "search"
+  | "book"
+  | "write"
+  | "write-pick"
+  | "mypage"
+  | "following"
+  | "settings"
+  | "terms"
+  | "privacy"
+  | "profile"
+  | "password"
+  | "post";
 type ModalType = "more" | "report" | "deletePost" | "leaveWrite" | "logout" | "deleteAccount" | "profilePhoto" | "sort" | null;
 type IconSource = StaticImageData | string;
 
@@ -86,18 +117,23 @@ export function BookmorakApp() {
   const [query, setQuery] = useState("");
   const [selectedGenre, setSelectedGenre] = useState("전체");
   const [liveBooks, setLiveBooks] = useState<Book[]>(fixedBookPreviews);
-  const [selectedBooks, setSelectedBooks] = useState<string[]>(fixedBookPreviews.slice(0, 2).map((book) => book.id));
+  const [selectedBooks, setSelectedBooks] = useState<string[]>([]);
   const [following, setFollowing] = useState<string[]>([]);
   const [likedPosts, setLikedPosts] = useState<string[]>([]);
+  const [likedComments, setLikedComments] = useState<string[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
+  const [postComments, setPostComments] = useState<CommentItem[]>([]);
   const [draftRating, setDraftRating] = useState(0);
   const [draftBody, setDraftBody] = useState("");
+  const [editingReviewId, setEditingReviewId] = useState<string | null>(null);
+  const [recentSearchTerms, setRecentSearchTerms] = useState<string[]>(defaultRecentSearches);
   const [toast, setToast] = useState("");
   const [modal, setModal] = useState<ModalType>(null);
   const [reportReason, setReportReason] = useState("스팸/홍보성");
   const [sortBy, setSortBy] = useState<"latest" | "popular">("latest");
   const [policyReturn, setPolicyReturn] = useState<Screen>("settings");
   const [bookReturnScreen, setBookReturnScreen] = useState<Screen>("home");
+  const [writeReturnScreen, setWriteReturnScreen] = useState<Screen>("home");
   const [profile, setProfile] = useState<Profile | null>(null);
   const isSyncing = false;
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -159,14 +195,26 @@ export function BookmorakApp() {
           fetchFixedBestsellerBooks(24).catch(() => []),
           listBooks().catch(() => []),
           currentProfile ? listFollowingBookIds(currentProfile.id).catch(() => []) : Promise.resolve([]),
-          listFeedReviews().catch(() => [])
+          currentProfile
+            ? listFeedReviews([], currentProfile.id).catch(() => [])
+            : listFeedReviews().catch(() => [])
         ]);
 
         if (!isMounted) return;
         // Keep fixed bestseller order, then overlay DB + Aladin details.
-        setLiveBooks(mergeBooks(fixedBookPreviews, [...dbBooks, ...firstPageBooks]));
+        // Prefer DB user ratings over Aladin placeholders (rating 0).
+        setLiveBooks(mergeBooks(fixedBookPreviews, [...firstPageBooks, ...dbBooks]));
         if (dbFollows.length > 0) setFollowing(dbFollows);
-        if (dbReviews.length > 0) setReviews(dbReviews);
+        if (dbReviews.length > 0) {
+          setReviews(
+            currentProfile
+              ? dbReviews.map((review) => ({
+                  ...review,
+                  mine: review.mine || review.user === currentProfile.nickname
+                }))
+              : dbReviews
+          );
+        }
 
         // Load remaining bestsellers in the background so the first screen is not blocked.
         const remainingLimit = Math.max(BESTSELLER_ISBN13.length - 24, 0);
@@ -201,12 +249,14 @@ export function BookmorakApp() {
   }, [liveBooks, query, selectedGenre]);
 
   const feedReviews = useMemo(() => {
-    if (following.length === 0) {
-      return reviews;
-    }
-
+    // Home feed only shows posts for followed books (including the user's own posts).
     return reviews.filter((review) => following.includes(review.bookId));
   }, [following, reviews]);
+
+  const myReviews = useMemo(() => {
+    if (!profile) return reviews.filter((review) => review.mine);
+    return reviews.filter((review) => review.mine || review.user === profile.nickname);
+  }, [profile, reviews]);
 
   const sortedBookReviews = useMemo(() => {
     const bookReviews = reviews.filter((review) => review.bookId === activeBook.id);
@@ -255,23 +305,88 @@ export function BookmorakApp() {
     setScreen("book");
 
     try {
-      const detailedBook = await fetchAladinBookDetail(bookId);
-      if (!detailedBook) return;
+      const [detailedBook, bookReviews] = await Promise.all([
+        fetchAladinBookDetail(bookId).catch(() => null),
+        listBookReviews(bookId, sortBy, profile?.id).catch(() => [])
+      ]);
 
-      setLiveBooks((prev) => mergeBooks(prev, [detailedBook]));
+      if (detailedBook) {
+        const userAverage =
+          bookReviews.length > 0
+            ? Math.round((bookReviews.reduce((sum, review) => sum + review.rating, 0) / bookReviews.length) * 10) / 10
+            : 0;
+        setLiveBooks((prev) =>
+          mergeBooks(prev, [
+            {
+              ...detailedBook,
+              rating: userAverage
+            }
+          ])
+        );
+      }
+
+      if (bookReviews.length > 0) {
+        setReviews((prev) => mergeReviews(prev, bookReviews));
+      }
     } catch {
       showToast("책 상세 정보를 불러오지 못했습니다.");
     }
   };
 
-  const openPost = (postId: string) => {
+  const openPost = async (postId: string) => {
     setActivePostId(postId);
     setScreen("post");
+    setPostComments([]);
+
+    try {
+      const comments = await listComments(postId);
+      setPostComments(comments);
+    } catch {
+      setPostComments([]);
+    }
+  };
+
+  const openWritePicker = (returnScreen: Screen = screen) => {
+    setWriteReturnScreen(returnScreen);
+    setEditingReviewId(null);
+    setDraftRating(0);
+    setDraftBody("");
+    setScreen("write-pick");
+  };
+
+  const openWriteForBook = (bookId: string, returnScreen: Screen = screen) => {
+    setWriteReturnScreen(returnScreen);
+    setActiveBookId(bookId);
+    setEditingReviewId(null);
+    setDraftRating(0);
+    setDraftBody("");
+    setScreen("write");
+  };
+
+  const persistOnboardingFollows = async (nextProfile: Profile) => {
+    if (selectedBooks.length === 0) return;
+
+    for (const bookId of selectedBooks) {
+      const targetBook = liveBooks.find((book) => book.id === bookId);
+      if (targetBook) {
+        await upsertBook(targetBook).catch(() => undefined);
+      }
+      await toggleBookFollow(nextProfile.id, bookId, true).catch(() => undefined);
+    }
+
+    setFollowing((prev) => Array.from(new Set([...prev, ...selectedBooks])));
   };
 
   const toggleFollow = async (bookId: string) => {
     const shouldFollow = !following.includes(bookId);
     setFollowing((prev) => (prev.includes(bookId) ? prev.filter((id) => id !== bookId) : [...prev, bookId]));
+    setLiveBooks((prev) =>
+      prev.map((book) =>
+        book.id === bookId
+          ? { ...book, followers: Math.max(0, (book.followers ?? 0) + (shouldFollow ? 1 : -1)) }
+          : book
+      )
+    );
 
     if (!profile) {
       showToast("로그인 후 서버에 팔로우가 저장됩니다.");
@@ -284,6 +399,13 @@ export function BookmorakApp() {
       await toggleBookFollow(profile.id, bookId, shouldFollow);
     } catch {
       setFollowing((prev) => (shouldFollow ? prev.filter((id) => id !== bookId) : [...prev, bookId]));
+      setLiveBooks((prev) =>
+        prev.map((book) =>
+          book.id === bookId
+            ? { ...book, followers: Math.max(0, (book.followers ?? 0) + (shouldFollow ? -1 : 1)) }
+            : book
+        )
+      );
       showToast("팔로우 처리에 실패했습니다.");
     }
   };
@@ -347,46 +469,84 @@ export function BookmorakApp() {
       return;
     }
 
-    let createdId = `r${Date.now()}`;
+    const trimmedBody = draftBody.trim();
 
     try {
       await upsertBook(activeBook);
-      if (profile) {
-        createdId = await createReview(profile.id, activeBook.id, draftRating, draftBody.trim());
+
+      if (editingReviewId && profile) {
+        await updateReview(editingReviewId, draftRating, trimmedBody);
+        setReviews((prev) =>
+          prev.map((review) =>
+            review.id === editingReviewId
+              ? { ...review, rating: draftRating, body: trimmedBody, date: formatReviewDate() }
+              : review
+          )
+        );
+        setEditingReviewId(null);
+        setDraftBody("");
+        setDraftRating(0);
+        setScreen("book");
+        showToast("수정되었습니다.");
+        return;
       }
+
+      let createdId = `r${Date.now()}`;
+      if (profile) {
+        createdId = await createReview(profile.id, activeBook.id, draftRating, trimmedBody);
+      }
+
+      const nextReview: Review = {
+        id: createdId,
+        bookId: activeBook.id,
+        user: profile?.nickname ?? currentUser.name,
+        tag: profile?.tag ? `#${profile.tag}` : currentUser.tag,
+        avatar: profile?.avatar_url ?? currentUser.avatar,
+        rating: draftRating,
+        body: trimmedBody,
+        likes: 0,
+        comments: 0,
+        date: formatReviewDate(),
+        mine: true
+      };
+
+      setReviews((prev) => [nextReview, ...prev]);
+      setLiveBooks((prev) => {
+        const related = reviews.filter((review) => review.bookId === activeBook.id);
+        const bookReviews = [nextReview, ...related];
+        const average =
+          bookReviews.length > 0
+            ? Math.round((bookReviews.reduce((sum, review) => sum + review.rating, 0) / bookReviews.length) * 10) / 10
+            : draftRating;
+        return mergeBooks(prev, [{ ...activeBook, rating: average }]);
+      });
+      setDraftBody("");
+      setDraftRating(0);
+      setScreen("book");
+      showToast("등록되었습니다.");
     } catch {
-      showToast("서버 저장에 실패해 화면에만 임시 반영합니다.");
+      showToast("서버 저장에 실패했습니다.");
     }
-
-    const nextReview: Review = {
-      id: createdId,
-      bookId: activeBook.id,
-      user: profile?.nickname ?? currentUser.name,
-      tag: profile?.tag ? `#${profile.tag}` : currentUser.tag,
-      avatar: profile?.avatar_url ?? currentUser.avatar,
-      rating: draftRating,
-      body: draftBody.trim(),
-      likes: 0,
-      comments: 0,
-      date: new Intl.DateTimeFormat("ko-KR", { year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()).replaceAll(". ", ".").replace(".", ""),
-      mine: true
-    };
-
-    setReviews((prev) => [nextReview, ...prev]);
-    setDraftBody("");
-    setDraftRating(0);
-    setScreen("book");
-    showToast("등록되었습니다.");
   };
 
   const handleLogin = async (email: string, password: string) => {
+    if (!isValidEmail(email)) {
+      showToast("이메일을 다시 입력해 주세요");
+      return;
+    }
+
     try {
       const loggedInProfile = await signInWithEmail(email, password);
       setProfile(loggedInProfile);
       if (loggedInProfile) {
-        const [dbFollows, dbReviews] = await Promise.all([listFollowingBookIds(loggedInProfile.id), listFeedReviews()]);
+        const [dbFollows, dbReviews] = await Promise.all([
+          listFollowingBookIds(loggedInProfile.id),
+          listFeedReviews([], loggedInProfile.id)
+        ]);
         setFollowing(dbFollows);
-        if (dbReviews.length > 0) setReviews(dbReviews);
+        if (dbReviews.length > 0) {
+          setReviews(dbReviews.map((review) => ({ ...review, mine: review.mine || review.user === loggedInProfile.nickname })));
+        }
       }
       setScreen("home");
       showToast("로그인 되었습니다.");
@@ -396,13 +556,75 @@ export function BookmorakApp() {
   };
 
   const handleSignup = async (email: string, password: string, nickname: string) => {
+    if (!isValidEmail(email)) {
+      showToast("이메일을 다시 입력해 주세요");
+      return;
+    }
+
     try {
       const createdProfile = await signUpWithEmail(email, password, nickname);
       setProfile(createdProfile);
+      if (createdProfile) {
+        await persistOnboardingFollows(createdProfile);
+        const feed = await listFeedReviews(selectedBooks, createdProfile.id).catch(() => []);
+        if (feed.length > 0) setReviews(feed);
+      }
       setScreen("home");
       showToast("계정이 생성되었습니다.");
-    } catch {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (message === "ALREADY_REGISTERED" || /already|registered|exists/i.test(message)) {
+        showToast("이미 가입된 이메일입니다.");
+        return;
+      }
       showToast("계정 생성에 실패했습니다.");
+    }
+  };
+
+  const submitComment = async (body: string, parentId?: string) => {
+    if (!profile) {
+      showToast("로그인 후 댓글을 작성할 수 있습니다.");
+      return;
+    }
+
+    if (!activePost?.id || activePost.id.startsWith("r")) {
+      showToast("샘플 게시글에는 댓글을 저장할 수 없습니다.");
+      return;
+    }
+
+    try {
+      const created = await createComment(profile.id, activePost.id, body, parentId);
+      setPostComments((prev) => [...prev, created]);
+      setReviews((prev) =>
+        prev.map((review) => (review.id === activePost.id ? { ...review, comments: review.comments + 1 } : review))
+      );
+      showToast(parentId ? "답글이 등록되었습니다." : "댓글이 등록되었습니다.");
+    } catch {
+      showToast("댓글 등록에 실패했습니다.");
+    }
+  };
+
+  const toggleCommentHeart = async (commentId: string) => {
+    const shouldLike = !likedComments.includes(commentId);
+    setLikedComments((prev) => (prev.includes(commentId) ? prev.filter((id) => id !== commentId) : [...prev, commentId]));
+    setPostComments((prev) =>
+      prev.map((comment) =>
+        comment.id === commentId ? { ...comment, likes: Math.max(0, comment.likes + (shouldLike ? 1 : -1)) } : comment
+      )
+    );
+
+    if (!profile || commentId.startsWith("c")) return;
+
+    try {
+      await toggleCommentLike(profile.id, commentId, shouldLike);
+    } catch {
+      setLikedComments((prev) => (shouldLike ? prev.filter((id) => id !== commentId) : [...prev, commentId]));
+      setPostComments((prev) =>
+        prev.map((comment) =>
+          comment.id === commentId ? { ...comment, likes: Math.max(0, comment.likes + (shouldLike ? -1 : 1)) } : comment
+        )
+      );
+      showToast("댓글 좋아요 처리에 실패했습니다.");
     }
   };
 
@@ -452,21 +674,21 @@ export function BookmorakApp() {
           } catch {
             showToast("카카오 로그인 설정을 확인해주세요.");
           }
-        }} onSignup={() => setScreen("signup")} />}
+        }} onSignup={() => setScreen("signup")} onToast={showToast} />}
         {screen === "signup" && <SignupScreen onBack={() => setScreen("preview")} onKakaoLogin={async () => {
           try {
             await signInWithKakao();
           } catch {
             showToast("카카오 로그인 설정을 확인해주세요.");
           }
-        }} onDone={handleSignup} onTerms={() => { setPolicyReturn("signup"); setScreen("terms"); }} onPrivacy={() => { setPolicyReturn("signup"); setScreen("privacy"); }} />}
+        }} onDone={handleSignup} onToast={showToast} onTerms={() => { setPolicyReturn("signup"); setScreen("terms"); }} onPrivacy={() => { setPolicyReturn("signup"); setScreen("privacy"); }} />}
         {screen === "home" && (
-          <AppFrame active="home" onNavigate={setScreen}>
+          <AppFrame active="home" onNavigate={(next) => (next === "write" ? openWritePicker("home") : setScreen(next))}>
             <HomeScreen
               reviews={feedReviews}
               bookCatalog={liveBooks}
               likedPosts={likedPosts}
-              onBook={openBook}
+              onBook={(bookId) => openBook(bookId, "home")}
               onPost={openPost}
               onLike={toggleLike}
               onMore={openMore}
@@ -477,16 +699,24 @@ export function BookmorakApp() {
         )}
         {screen === "notifications" && <NotificationsScreen onBack={() => setScreen("home")} onPost={openPost} onClear={() => showToast("모두 읽기 처리되었습니다.")} />}
         {screen === "search" && (
-          <AppFrame active="search" onNavigate={setScreen}>
+          <AppFrame active="search" onNavigate={(next) => (next === "write" ? openWritePicker("search") : setScreen(next))}>
             <SearchScreen
               query={query}
               selectedGenre={selectedGenre}
               following={following}
               results={filteredBooks}
+              recentSearches={recentSearchTerms}
               isSyncing={isSyncing}
-              onQuery={setQuery}
+              onQuery={(nextQuery) => {
+                setQuery(nextQuery);
+                if (nextQuery.trim()) {
+                  setRecentSearchTerms((prev) => [nextQuery.trim(), ...prev.filter((item) => item !== nextQuery.trim())].slice(0, 10));
+                }
+              }}
+              onClearRecent={() => setRecentSearchTerms([])}
+              onRemoveRecent={(term) => setRecentSearchTerms((prev) => prev.filter((item) => item !== term))}
               onGenre={setSelectedGenre}
-              onBook={openBook}
+              onBook={(bookId) => openBook(bookId, "search")}
               onFollow={toggleFollow}
             />
           </AppFrame>
@@ -500,7 +730,7 @@ export function BookmorakApp() {
             sortBy={sortBy}
             onBack={() => setScreen(bookReturnScreen)}
             onFollow={() => toggleFollow(activeBook.id)}
-            onWrite={() => setScreen("write")}
+            onWrite={() => openWriteForBook(activeBook.id, "book")}
             onPost={openPost}
             onLike={toggleLike}
             onMore={openMore}
@@ -508,12 +738,20 @@ export function BookmorakApp() {
             onToast={showToast}
           />
         )}
+        {screen === "write-pick" && (
+          <WritePickScreen
+            books={following.length > 0 ? liveBooks.filter((book) => following.includes(book.id)) : liveBooks}
+            onBack={() => setScreen(writeReturnScreen)}
+            onPick={(bookId) => openWriteForBook(bookId, writeReturnScreen)}
+          />
+        )}
         {screen === "write" && (
           <WriteScreen
             book={activeBook}
             rating={draftRating}
             body={draftBody}
-            onBack={() => (draftRating || draftBody ? setModal("leaveWrite") : setScreen("book"))}
+            onBack={() => (draftRating || draftBody ? setModal("leaveWrite") : setScreen(editingReviewId ? "post" : writeReturnScreen === "book" ? "book" : "write-pick"))}
+            onChangeBook={() => setScreen("write-pick")}
             onRating={setDraftRating}
             onBody={setDraftBody}
             onSubmit={submitReview}
@@ -521,16 +759,16 @@ export function BookmorakApp() {
           />
         )}
         {screen === "mypage" && (
-          <AppFrame active="mypage" onNavigate={setScreen}>
+          <AppFrame active="mypage" onNavigate={(next) => (next === "write" ? openWritePicker("mypage") : setScreen(next))}>
             <MyPageScreen
-              reviews={reviews.filter((review) => review.mine)}
+              reviews={myReviews}
               profile={profile}
               bookCatalog={liveBooks}
               followingCount={following.length}
               onSettings={() => setScreen("settings")}
               onProfile={() => setScreen("profile")}
               onFollowing={() => setScreen("following")}
-              onBook={openBook}
+              onBook={(bookId) => openBook(bookId, "mypage")}
               onPost={openPost}
               onMore={openMore}
               onToast={showToast}
@@ -560,11 +798,14 @@ export function BookmorakApp() {
             review={activePost}
             book={liveBooks.find((book) => book.id === activePost.bookId) ?? activeBook}
             liked={likedPosts.includes(activePost.id)}
+            comments={postComments}
+            likedComments={likedComments}
             onBack={() => setScreen("home")}
-            onBook={openBook}
+            onBook={(bookId) => openBook(bookId, "post")}
             onLike={() => toggleLike(activePost.id)}
             onMore={() => openMore(activePost.id)}
-            onToast={showToast}
+            onSubmitComment={submitComment}
+            onToggleCommentLike={toggleCommentHeart}
           />
         )}
         <ModalLayer
@@ -580,28 +821,38 @@ export function BookmorakApp() {
           onDelete={deleteActivePost}
           onEdit={() => {
             setModal(null);
+            setEditingReviewId(activePost.id);
             setDraftRating(activePost.rating);
             setDraftBody(activePost.body);
             setActiveBookId(activePost.bookId);
+            setWriteReturnScreen("post");
             setScreen("write");
           }}
           onLeaveWrite={(save) => {
             setModal(null);
             if (save) showToast("임시저장되었습니다.");
-            setScreen("book");
+            setScreen(writeReturnScreen === "book" ? "book" : writeReturnScreen);
           }}
           onLogout={() => {
             setModal(null);
             signOut().finally(() => {
               setProfile(null);
+              setFollowing([]);
               setScreen("start");
               showToast("로그아웃 되었습니다.");
             });
           }}
           onDeleteAccount={() => {
             setModal(null);
-            setScreen("start");
-            showToast("계정 삭제되었습니다.");
+            deleteCurrentAccount()
+              .then(() => {
+                setProfile(null);
+                setFollowing([]);
+                setReviews([]);
+                setScreen("start");
+                showToast("계정 삭제되었습니다.");
+              })
+              .catch(() => showToast("계정 삭제에 실패했습니다."));
           }}
           onProfilePhoto={(kind) => {
             setModal(null);
@@ -642,21 +893,15 @@ export function BookmorakApp() {
 function StartScreen({ onStart, onLogin }: { onStart: () => void; onLogin: () => void }) {
   return (
     <section className="start-screen">
-      <div className="cloud cloud-one" />
-      <div className="cloud cloud-two" />
+      <Image className="start-bg" src={startBgIcon} alt="" fill unoptimized priority />
       <div className="logo-hero">
-        <div className="mascot">
-          <span>☁️</span>
-          <strong>📖</strong>
-        </div>
-        <h1>
-          <span>책</span>모락
-        </h1>
-        <p>책 이야기가 모락모락 피어나는 곳</p>
+        <Image className="start-character" src={startCharacterIcon} alt="책모락 캐릭터" width={280} height={230} unoptimized priority />
+        <Image className="start-logo" src={startLogoIcon} alt="책모락" width={220} height={72} unoptimized priority />
+        <Image className="start-service" src={startServiceIcon} alt="책 이야기가 모락모락 피어나는 곳" width={260} height={36} unoptimized priority />
       </div>
       <div className="start-actions">
         <button className="primary-button" onClick={onStart}>
-          시작하기 <ChevronRight size={22} />
+          시작하기
         </button>
         <button className="outline-button" onClick={onLogin}>
           로그인
@@ -718,9 +963,8 @@ function HomeScreen({ reviews, bookCatalog, likedPosts, onBook, onPost, onLike, 
     <section className="screen">
       <div className="home-top">
         <LogoText />
-        <button className="bell-button" onClick={onNotifications}>
+        <button className="bell-button" onClick={onNotifications} aria-label="알림">
           <Bell />
-          <span />
         </button>
       </div>
       {reviews.length === 0 ? (
@@ -744,7 +988,33 @@ function HomeScreen({ reviews, bookCatalog, likedPosts, onBook, onPost, onLike, 
   );
 }
 
-function SearchScreen({ query, selectedGenre, following, results, isSyncing, onQuery, onGenre, onBook, onFollow }: { query: string; selectedGenre: string; following: string[]; results: Book[]; isSyncing: boolean; onQuery: (query: string) => void; onGenre: (genre: string) => void; onBook: (bookId: string) => void; onFollow: (bookId: string) => void }) {
+function SearchScreen({
+  query,
+  selectedGenre,
+  following,
+  results,
+  recentSearches,
+  isSyncing,
+  onQuery,
+  onClearRecent,
+  onRemoveRecent,
+  onGenre,
+  onBook,
+  onFollow
+}: {
+  query: string;
+  selectedGenre: string;
+  following: string[];
+  results: Book[];
+  recentSearches: string[];
+  isSyncing: boolean;
+  onQuery: (query: string) => void;
+  onClearRecent: () => void;
+  onRemoveRecent: (term: string) => void;
+  onGenre: (genre: string) => void;
+  onBook: (bookId: string) => void;
+  onFollow: (bookId: string) => void;
+}) {
   return (
     <section className="screen">
       <label className="search-box">
@@ -760,12 +1030,32 @@ function SearchScreen({ query, selectedGenre, following, results, isSyncing, onQ
         <>
           <div className="section-row">
             <h2>최근 검색어</h2>
-            <button className="text-button">전체 삭제 <IconAsset src={deleteIcon} alt="" size={14} /></button>
+            <button className="text-button" onClick={onClearRecent}>
+              전체 삭제 <IconAsset src={deleteIcon} alt="" size={14} />
+            </button>
           </div>
           <div className="chips">
             {recentSearches.map((item) => (
               <button key={item} className="chip" onClick={() => onQuery(item)}>
-                {item} <IconAsset src={deleteIcon} alt="" size={14} />
+                {item}
+                <span
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`${item} 삭제`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onRemoveRecent(item);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      onRemoveRecent(item);
+                    }
+                  }}
+                >
+                  <IconAsset src={deleteIcon} alt="" size={14} />
+                </span>
               </button>
             ))}
           </div>
@@ -881,7 +1171,29 @@ function BookDetailScreen({ book, reviews, following, likedPosts, sortBy, onBack
   );
 }
 
-function WriteScreen({ book, rating, body, onBack, onRating, onBody, onSubmit, onToast }: { book: Book; rating: number; body: string; onBack: () => void; onRating: (rating: number) => void; onBody: (body: string) => void; onSubmit: () => void; onToast: (message: string) => void }) {
+function WritePickScreen({ books, onBack, onPick }: { books: Book[]; onBack: () => void; onPick: (bookId: string) => void }) {
+  return (
+    <section className="scroll-content screen">
+      <Header title="책 선택" onBack={onBack} />
+      <p className="lead">감상을 남길 책을 선택해주세요.</p>
+      <div className="book-list onboarding-book-list">
+        {books.map((book) => (
+          <button key={book.id} className="book-row" onClick={() => onPick(book.id)}>
+            <BookCover book={book} />
+            <span>
+              <strong>{book.title}</strong>
+              <small>{book.author}</small>
+              <em>{book.genres.join(" · ")}</em>
+            </span>
+            <b>선택</b>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function WriteScreen({ book, rating, body, onBack, onChangeBook, onRating, onBody, onSubmit, onToast }: { book: Book; rating: number; body: string; onBack: () => void; onChangeBook: () => void; onRating: (rating: number) => void; onBody: (body: string) => void; onSubmit: () => void; onToast: (message: string) => void }) {
   const canSubmit = rating > 0 && body.trim().length >= 30;
 
   return (
@@ -893,7 +1205,7 @@ function WriteScreen({ book, rating, body, onBack, onRating, onBody, onSubmit, o
           <strong>{book.title}</strong>
           <span>{book.author}</span>
         </div>
-        <button>변경</button>
+        <button onClick={onChangeBook}>변경</button>
       </div>
       <h2>이 책은 어떠셨나요?</h2>
       <div className="rating-picker">
@@ -994,7 +1306,7 @@ function ReviewCard({ review, book, liked = false, compact = false, variant, onB
         </button>
       </div>
       <button className="review-body" onClick={onPost}>
-        {review.body.length > 150 ? `${review.body.slice(0, 150)}... 더보기` : review.body}
+        {truncateReviewBody(review.body, 150)}
       </button>
       <footer className="review-meta">
         <button className={liked ? "liked" : ""} onClick={onLike}>
@@ -1069,9 +1381,10 @@ function PreviewScreen({ bookCatalog, selectedBooks, onBack, onAdd, onSignup }: 
   );
 }
 
-function LoginScreen({ onBack, onLogin, onKakaoLogin, onSignup }: { onBack: () => void; onLogin: (email: string, password: string) => void; onKakaoLogin: () => void; onSignup: () => void }) {
+function LoginScreen({ onBack, onLogin, onKakaoLogin, onSignup, onToast }: { onBack: () => void; onLogin: (email: string, password: string) => void; onKakaoLogin: () => void; onSignup: () => void; onToast: (message: string) => void }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const canSubmit = isValidEmail(email) && password.length > 0;
 
   return (
     <section className="screen auth-screen">
@@ -1080,13 +1393,25 @@ function LoginScreen({ onBack, onLogin, onKakaoLogin, onSignup }: { onBack: () =
       <button className="social kakao" onClick={onKakaoLogin}>카카오로 로그인</button>
       <label className="field"><span>이메일</span><input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="이메일을 입력해주세요" /></label>
       <label className="field"><span>비밀번호</span><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="비밀번호를 입력해주세요" /></label>
-      <button className={email && password ? "primary-button" : "primary-button disabled"} onClick={() => onLogin(email, password)}>로그인 하기</button>
+      <button
+        className={canSubmit ? "primary-button" : "primary-button disabled"}
+        disabled={!canSubmit}
+        onClick={() => {
+          if (!isValidEmail(email)) {
+            onToast("이메일을 다시 입력해 주세요");
+            return;
+          }
+          onLogin(email, password);
+        }}
+      >
+        로그인 하기
+      </button>
       <button className="link-button" onClick={onSignup}>아직 계정이 없나요? 이메일로 시작하기</button>
     </section>
   );
 }
 
-function SignupScreen({ onBack, onKakaoLogin, onDone, onTerms, onPrivacy }: { onBack: () => void; onKakaoLogin: () => void; onDone: (email: string, password: string, nickname: string) => void; onTerms: () => void; onPrivacy: () => void }) {
+function SignupScreen({ onBack, onKakaoLogin, onDone, onToast, onTerms, onPrivacy }: { onBack: () => void; onKakaoLogin: () => void; onDone: (email: string, password: string, nickname: string) => void; onToast: (message: string) => void; onTerms: () => void; onPrivacy: () => void }) {
   const [name, setName] = useState("");
   const [agree, setAgree] = useState(false);
   const [email, setEmail] = useState("");
@@ -1104,12 +1429,13 @@ function SignupScreen({ onBack, onKakaoLogin, onDone, onTerms, onPrivacy }: { on
           <p>{email || "입력한 이메일"}로 보낸 인증 메일을 확인한 뒤 아래 버튼을 눌러주세요. 유효시간은 3분입니다.</p>
         </div>
         <button className="primary-button" onClick={() => setStage("account")}>확인</button>
-        <button className="outline-button" onClick={() => setStage("verify")}>인증 메일 재전송</button>
+        <button className="outline-button" onClick={() => onToast("인증 메일을 다시 확인해주세요.")}>인증 메일 재전송</button>
       </section>
     );
   }
 
   if (stage === "email") {
+    const canVerify = isValidEmail(email) && agree;
     return (
       <section className="screen auth-screen">
         <Header title="시작하기" onBack={onBack} />
@@ -1120,7 +1446,19 @@ function SignupScreen({ onBack, onKakaoLogin, onDone, onTerms, onPrivacy }: { on
         <label className="agree"><input type="checkbox" checked={agree} onChange={(event) => setAgree(event.target.checked)} /> 전체 동의합니다.</label>
         <button className="policy-row" onClick={onTerms}>[필수] 이용 약관 동의 <ChevronRight /></button>
         <button className="policy-row" onClick={onPrivacy}>[필수] 개인정보 수집 및 이용 동의 <ChevronRight /></button>
-        <button className={email.includes("@") && agree ? "primary-button" : "primary-button disabled"} disabled={!email.includes("@") || !agree} onClick={() => setStage("verify")}>인증하기</button>
+        <button
+          className={canVerify ? "primary-button" : "primary-button disabled"}
+          disabled={!canVerify}
+          onClick={() => {
+            if (!isValidEmail(email)) {
+              onToast("이메일을 다시 입력해 주세요");
+              return;
+            }
+            setStage("verify");
+          }}
+        >
+          인증하기
+        </button>
       </section>
     );
   }
@@ -1178,17 +1516,18 @@ function SettingsScreen({ onBack, onTerms, onPrivacy, onLogout, onDeleteAccount,
 function ProfileScreen({ profile, onBack, onPassword, onPhoto, onSave }: { profile: Profile | null; onBack: () => void; onPassword: () => void; onPhoto: () => void; onSave: (values: Partial<Pick<Profile, "nickname" | "bio">>) => void }) {
   const [nickname, setNickname] = useState(profile?.nickname ?? currentUser.name);
   const [bio, setBio] = useState(profile?.bio ?? currentUser.intro);
+  const email = profile?.email || currentUser.email || "이메일을 불러오지 못했습니다.";
 
   return (
     <section className="screen auth-screen">
       <Header title="프로필 편집" onBack={onBack} right={<button className="save-button" onClick={() => onSave({ nickname, bio })}>완료</button>} />
       <button className="profile-photo-button" onClick={onPhoto}>
         <span className="avatar upload">{profile?.avatar_url ? <Image src={profile.avatar_url} alt="프로필 이미지" width={104} height={104} unoptimized /> : currentUser.avatar}</span>
-        <b><IconAsset src={cameraIcon} alt="" size={16} /></b>
+        <b aria-hidden="true"><IconAsset src={cameraIcon} alt="" size={16} /></b>
       </button>
       <label className="field"><span>소개글</span><input value={bio} onChange={(event) => setBio(event.target.value)} maxLength={100} /></label>
       <label className="field"><span>닉네임</span><input value={nickname} onChange={(event) => setNickname(event.target.value)} maxLength={10} /></label>
-      <label className="field"><span>이메일</span><input value={profile?.email ?? currentUser.email} readOnly /></label>
+      <label className="field"><span>이메일</span><input value={email} readOnly /></label>
       <button className="outline-button" onClick={onPassword}>비밀번호 변경</button>
     </section>
   );
@@ -1206,10 +1545,39 @@ function PasswordScreen({ onBack, onDone, onToast }: { onBack: () => void; onDon
   );
 }
 
-function PostDetailScreen({ review, book, liked, onBack, onBook, onLike, onMore, onToast }: { review: Review; book: Book; liked: boolean; onBack: () => void; onBook: (bookId: string) => void; onLike: () => void; onMore: () => void; onToast: (message: string) => void }) {
-  const [replyingTo, setReplyingTo] = useState("");
+function PostDetailScreen({
+  review,
+  book,
+  liked,
+  comments,
+  likedComments,
+  onBack,
+  onBook,
+  onLike,
+  onMore,
+  onSubmitComment,
+  onToggleCommentLike
+}: {
+  review: Review;
+  book: Book;
+  liked: boolean;
+  comments: CommentItem[];
+  likedComments: string[];
+  onBack: () => void;
+  onBook: (bookId: string) => void;
+  onLike: () => void;
+  onMore: () => void;
+  onSubmitComment: (body: string, parentId?: string) => void;
+  onToggleCommentLike: (commentId: string) => void;
+}) {
+  const [replyingTo, setReplyingTo] = useState<{ id: string; name: string } | null>(null);
   const [commentText, setCommentText] = useState("");
-  const [expandedReplies, setExpandedReplies] = useState(false);
+  const rootComments = comments.filter((comment) => !comment.parentId);
+  const repliesByParent = comments.reduce<Record<string, CommentItem[]>>((acc, comment) => {
+    if (!comment.parentId) return acc;
+    acc[comment.parentId] = [...(acc[comment.parentId] ?? []), comment];
+    return acc;
+  }, {});
 
   return (
     <section className="scroll-content screen post-detail">
@@ -1227,36 +1595,69 @@ function PostDetailScreen({ review, book, liked, onBack, onBook, onLike, onMore,
       <p className="post-body">{review.body}</p>
       <footer className="review-meta">
         <button className={liked ? "liked" : ""} onClick={onLike}><IconAsset src={liked ? likeActiveIcon : likeIcon} alt="" size={18} /> {formatCount(review.likes + (liked ? 1 : 0))}</button>
-        <button><IconAsset src={commentIcon} alt="" size={18} /> 댓글 {review.comments}</button>
+        <button><IconAsset src={commentIcon} alt="" size={18} /> 댓글 {comments.length}</button>
         <time>{review.date}</time>
       </footer>
       <section className="comments">
-        <h2>댓글 {review.comments}</h2>
-        <Comment name="수줍은고양이" body="저도 이 부분이 제일 좋았어요. 담백한 문장이 오래 남네요." likes={12} onReply={() => setReplyingTo("수줍은고양이")} />
-        <div className="replies">
-          <Comment small name="귀여운나무늘보" body="맞아요. 마지막 문장이 특히 좋았어요." likes={5} />
-          <Comment small name="상냥한고양이" body="저도 밑줄 그었어요." likes={3} />
-          <Comment small name="밝은독서광" body="다시 읽어보고 싶네요." likes={2} />
-          {expandedReplies && <Comment small name="수줍은드래곤" body="답글까지 보니 더 공감됩니다." likes={1} />}
-          <button className="reply-toggle" onClick={() => setExpandedReplies((prev) => !prev)}>{expandedReplies ? "답글 접기" : "답글 펼치기"}</button>
-        </div>
-        <Comment name="밝은독서광" body="리뷰 보고 바로 장바구니에 넣었습니다!" likes={4} onReply={() => setReplyingTo("밝은독서광")} />
+        <h2>댓글 {comments.length}</h2>
+        {rootComments.length === 0 ? (
+          <EmptyState title="아직 댓글이 없어요." body="첫 댓글을 남겨보세요." />
+        ) : (
+          rootComments.map((comment) => (
+            <div key={comment.id}>
+              <Comment
+                name={`${comment.user}${comment.tag}`}
+                body={comment.body}
+                likes={comment.likes}
+                liked={likedComments.includes(comment.id)}
+                onLike={() => onToggleCommentLike(comment.id)}
+                onReply={() => setReplyingTo({ id: comment.id, name: comment.user })}
+              />
+              {(repliesByParent[comment.id] ?? []).length > 0 && (
+                <div className="replies">
+                  {(repliesByParent[comment.id] ?? []).map((reply) => (
+                    <Comment
+                      key={reply.id}
+                      small
+                      name={`${reply.user}${reply.tag}`}
+                      body={reply.body}
+                      likes={reply.likes}
+                      liked={likedComments.includes(reply.id)}
+                      onLike={() => onToggleCommentLike(reply.id)}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          ))
+        )}
       </section>
-      {replyingTo && <div className="replying-banner">{replyingTo}님에게 답글 남기는 중 <button onClick={() => setReplyingTo("")}>X</button></div>}
+      {replyingTo && <div className="replying-banner">{replyingTo.name}님에게 답글 남기는 중 <button onClick={() => setReplyingTo(null)}>X</button></div>}
       <div className="comment-input">
         <textarea value={commentText} maxLength={1000} onChange={(event) => setCommentText(event.target.value)} placeholder="댓글을 입력해주세요" />
-        <button disabled={!commentText.trim()} onClick={() => { onToast(replyingTo ? "답글이 등록되었습니다." : "댓글이 등록되었습니다."); setCommentText(""); setReplyingTo(""); }}>등록</button>
+        <button
+          disabled={!commentText.trim()}
+          onClick={() => {
+            const body = commentText.trim();
+            if (!body) return;
+            onSubmitComment(body, replyingTo?.id);
+            setCommentText("");
+            setReplyingTo(null);
+          }}
+        >
+          등록
+        </button>
       </div>
     </section>
   );
 }
 
-function Comment({ name, body, likes, small = false, onReply }: { name: string; body: string; likes: number; small?: boolean; onReply?: () => void }) {
+function Comment({ name, body, likes, liked = false, small = false, onReply, onLike }: { name: string; body: string; likes: number; liked?: boolean; small?: boolean; onReply?: () => void; onLike?: () => void }) {
   return (
     <article className={small ? "comment small-comment" : "comment"}>
       <strong>{name}</strong>
       <p>{body}</p>
-      <button><IconAsset src={likeIcon} alt="" size={15} /> {likes}</button>
+      <button className={liked ? "liked" : ""} onClick={onLike}><IconAsset src={liked ? likeActiveIcon : likeIcon} alt="" size={15} /> {likes}</button>
       {onReply && <button onClick={onReply}>답글 달기</button>}
     </article>
   );
@@ -1503,7 +1904,9 @@ function mergeBooks(baseBooks: Book[], nextBooks: Book[]) {
       ...previous,
       ...book,
       cover: book.cover || previous.cover,
+      // Prefer in-app user ratings; keep previous when incoming Aladin rating is 0.
       rating: book.rating > 0 ? book.rating : previous.rating,
+      followers: Math.max(book.followers ?? 0, previous.followers ?? 0),
       description:
         book.description && book.description !== "책 소개를 불러오지 못했습니다."
           ? book.description
@@ -1513,6 +1916,27 @@ function mergeBooks(baseBooks: Book[], nextBooks: Book[]) {
   });
 
   return Array.from(merged.values());
+}
+
+function mergeReviews(baseReviews: Review[], nextReviews: Review[]) {
+  const merged = new Map<string, Review>();
+  [...baseReviews, ...nextReviews].forEach((review) => {
+    merged.set(review.id, { ...merged.get(review.id), ...review });
+  });
+  return Array.from(merged.values());
+}
+
+function isValidEmail(email: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+}
+
+function truncateReviewBody(body: string, limit = 150) {
+  if (body.length <= limit) return body;
+
+  const slice = body.slice(0, limit);
+  const lastSpace = slice.lastIndexOf(" ");
+  const cut = lastSpace > Math.floor(limit * 0.6) ? slice.slice(0, lastSpace) : slice;
+  return `${cut.trimEnd()}... 더보기`;
 }
 
 const UI_GENRES = new Set(["소설", "에세이", "자기계발", "판타지", "동화", "힐링"]);

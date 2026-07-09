@@ -184,6 +184,10 @@ create policy "users update their profile" on public.profiles for update
 using (auth_user_id = auth.uid())
 with check (auth_user_id = auth.uid());
 
+drop policy if exists "users delete their profile" on public.profiles;
+create policy "users delete their profile" on public.profiles for delete
+using (auth_user_id = auth.uid());
+
 drop policy if exists "books are readable" on public.books;
 create policy "books are readable" on public.books for select using (true);
 

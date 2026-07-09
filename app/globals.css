@@ -228,67 +228,45 @@ svg {
   justify-content: flex-end;
   padding: 44px 17px 70px;
   overflow: hidden;
+  background: linear-gradient(180deg, #fff8e8 0%, #ffe9b8 48%, #ffd98a 100%);
 }
 
-.cloud {
-  position: absolute;
-  width: 210px;
-  height: 130px;
-  border-radius: 999px;
-  background: #fff1ca;
-  opacity: 0.9;
-}
-
-.cloud-one {
-  top: -42px;
-  left: -55px;
-}
-
-.cloud-two {
-  right: -70px;
-  bottom: 260px;
+.start-bg {
+  object-fit: cover;
+  opacity: 0.35;
+  pointer-events: none;
 }
 
 .logo-hero {
   z-index: 1;
-  margin-bottom: 126px;
+  display: grid;
+  justify-items: center;
+  gap: 18px;
+  margin-bottom: 72px;
   text-align: center;
 }
 
-.mascot {
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: 280px;
-  height: 230px;
-  margin: 0 auto;
-  font-size: 84px;
+.start-character {
+  width: min(280px, 72vw);
+  height: auto;
 }
 
-.mascot span {
-  position: absolute;
-  transform: scale(3.4);
-  opacity: 0.55;
+.start-logo {
+  width: min(220px, 58vw);
+  height: auto;
 }
 
-.mascot strong {
+.start-service {
+  width: min(260px, 70vw);
+  height: auto;
+}
+
+.start-actions {
   z-index: 1;
-  transform: translateY(26px);
+  display: grid;
+  gap: 14px;
 }
 
-.logo-hero h1 {
-  margin: 0;
-  color: #817463;
-  font-size: 72px;
-  font-weight: 900;
-  letter-spacing: -0.12em;
-}
-
-.logo-hero h1 span {
-  color: var(--primary);
-}
-
-.logo-hero p,
 .lead,
 .hint {
   color: var(--muted);
@@ -306,18 +284,6 @@ svg {
   line-height: var(--line-body);
 }
 
-.logo-hero p {
-  margin: 18px 0 0;
-  font-size: 19px;
-  letter-spacing: 0.03em;
-}
-
-.start-actions {
-  z-index: 1;
-  display: grid;
-  gap: 14px;
-}
-
 .home-top {
   display: flex;
   align-items: center;
@@ -328,16 +294,6 @@ svg {
 .bell-button {
   position: relative;
   color: #9b9b9b;
-}
-
-.bell-button span {
-  position: absolute;
-  top: 8px;
-  right: 9px;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--primary);
 }
 
 .book-strip {
@@ -1629,6 +1585,12 @@ p {
   border-radius: 50%;
   background: var(--primary);
   color: white;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 18%);
+}
+
+.profile-photo-button .icon-asset {
+  display: block;
+  filter: brightness(0) invert(1);
 }
 
 .modal-backdrop {

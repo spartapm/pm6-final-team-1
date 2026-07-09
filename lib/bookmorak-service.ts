@@ -150,19 +150,50 @@ export async function signUpWithEmail(email: string, password: string, nickname:
 
   if (error) throw error;
 
-  if (data.user) {
-    await supabase.from("profiles").upsert(
-      {
-        auth_user_id: data.user.id,
-        email,
-        nickname,
-        tag: String(Math.floor(Math.random() * 10000)).padStart(4, "0")
-      },
-      { onConflict: "auth_user_id" }
-    );
+  // Supabase may return a user without identities when the email is already registered.
+  if (!data.user || (data.user.identities && data.user.identities.length === 0)) {
+    throw new Error("ALREADY_REGISTERED");
   }
 
+  await supabase.from("profiles").upsert(
+    {
+      auth_user_id: data.user.id,
+      email,
+      nickname,
+      tag: String(Math.floor(Math.random() * 10000)).padStart(4, "0")
+    },
+    { onConflict: "auth_user_id" }
+  );
+
   return getCurrentProfile();
+}
+
+export async function deleteCurrentAccount() {
+  const {
+    data: { session }
+  } = await supabase.auth.getSession();
+
+  if (!session?.access_token) {
+    throw new Error("로그인 정보가 없습니다.");
+  }
+
+  const response = await fetch("/api/delete-account", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${session.access_token}`
+    }
+  });
+
+  if (!response.ok) {
+    // Fallback: at least remove the public profile so the product becomes unusable.
+    const profile = await getCurrentProfile();
+    if (profile) {
+      const { error } = await supabase.from("profiles").delete().eq("id", profile.id);
+      if (error) throw error;
+    }
+  }
+
+  await signOut();
 }
 
 export async function signOut() {
@@ -312,7 +343,7 @@ export async function listBooks() {
   return ((data ?? []) as BookRow[]).map(mapBookRow);
 }
 
-export async function listFeedReviews(bookIds: string[] = []) {
+export async function listFeedReviews(bookIds: string[] = [], currentProfileId?: string) {
   let query = reviewSelect().eq("is_draft", false).order("created_at", { ascending: false }).limit(40);
 
   if (bookIds.length > 0) {
@@ -321,14 +352,14 @@ export async function listFeedReviews(bookIds: string[] = []) {
 
   const { data, error } = await query;
   if (error) throw error;
-  return ((data ?? []) as unknown as ReviewRow[]).map(mapReviewRow);
+  return ((data ?? []) as unknown as ReviewRow[]).map((row) => mapReviewRow(row, currentProfileId));
 }
 
-export async function listBookReviews(bookId: string, sortBy: "latest" | "popular" = "latest") {
+export async function listBookReviews(bookId: string, sortBy: "latest" | "popular" = "latest", currentProfileId?: string) {
   const { data, error } = await reviewSelect().eq("book_id", bookId).eq("is_draft", false).order("created_at", { ascending: false });
   if (error) throw error;
 
-  const mapped = ((data ?? []) as unknown as ReviewRow[]).map(mapReviewRow);
+  const mapped = ((data ?? []) as unknown as ReviewRow[]).map((row) => mapReviewRow(row, currentProfileId));
   return sortBy === "popular" ? mapped.sort((a, b) => b.likes - a.likes) : mapped;
 }
 
@@ -382,13 +413,105 @@ export async function toggleReviewLike(profileId: string, reviewId: string, shou
 }
 
 export async function createComment(profileId: string, reviewId: string, body: string, parentId?: string) {
-  const { error } = await supabase.from("comments").insert({ user_id: profileId, review_id: reviewId, body, parent_id: parentId ?? null });
+  const { data, error } = await supabase
+    .from("comments")
+    .insert({ user_id: profileId, review_id: reviewId, body, parent_id: parentId ?? null })
+    .select(
+      `
+      id,
+      review_id,
+      parent_id,
+      body,
+      created_at,
+      profiles:user_id(id, nickname, tag, avatar_url),
+      comment_likes(user_id)
+    `
+    )
+    .single();
+
+  if (error) throw error;
+  return mapCommentRow(data as unknown as CommentRow);
+}
+
+export async function listComments(reviewId: string) {
+  const { data, error } = await supabase
+    .from("comments")
+    .select(
+      `
+      id,
+      review_id,
+      parent_id,
+      body,
+      created_at,
+      profiles:user_id(id, nickname, tag, avatar_url),
+      comment_likes(user_id)
+    `
+    )
+    .eq("review_id", reviewId)
+    .order("created_at", { ascending: true });
+
+  if (error) throw error;
+  return ((data ?? []) as unknown as CommentRow[]).map(mapCommentRow);
+}
+
+export async function toggleCommentLike(profileId: string, commentId: string, shouldLike: boolean) {
+  if (shouldLike) {
+    const { error } = await supabase.from("comment_likes").insert({ user_id: profileId, comment_id: commentId });
+    if (error && error.code !== "23505") throw error;
+    return;
+  }
+
+  const { error } = await supabase.from("comment_likes").delete().eq("user_id", profileId).eq("comment_id", commentId);
   if (error) throw error;
 }
 
 export async function reportReview(profileId: string, reviewId: string, reason: string) {
   const { error } = await supabase.from("reports").insert({ reporter_id: profileId, review_id: reviewId, reason });
   if (error) throw error;
+}
+
+export type CommentItem = {
+  id: string;
+  reviewId: string;
+  parentId: string | null;
+  user: string;
+  tag: string;
+  avatar: string;
+  body: string;
+  likes: number;
+  date: string;
+};
+
+type CommentRow = {
+  id: string;
+  review_id: string;
+  parent_id: string | null;
+  body: string;
+  created_at: string;
+  profiles?: { id: string; nickname: string; tag: string; avatar_url: string | null } | null;
+  comment_likes?: { user_id: string }[];
+};
+
+function mapCommentRow(row: CommentRow): CommentItem {
+  return {
+    id: row.id,
+    reviewId: row.review_id,
+    parentId: row.parent_id,
+    user: row.profiles?.nickname ?? "독서광",
+    tag: row.profiles?.tag ? `#${row.profiles.tag}` : "#0000",
+    avatar: row.profiles?.avatar_url ?? "📚",
+    body: row.body,
+    likes: row.comment_likes?.length ?? 0,
+    date: formatReviewDate(row.created_at)
+  };
+}
+
+export function formatReviewDate(value: string | Date = new Date()) {
+  const date = value instanceof Date ? value : new Date(value);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}.${month}.${day}`;
 }
 
 function reviewSelect() {
@@ -414,7 +537,8 @@ function mapAladinItemToBook(item: AladinItem): AladinBook {
     title: item.title ?? "제목 없음",
     author: item.author ?? "저자 미상",
     cover: normalizeCoverUrl(item.cover),
-    rating: item.customerReviewRank ? Math.round((item.customerReviewRank / 2) * 10) / 10 : 0,
+    // Book detail / list ratings should come from in-app user reviews, not Aladin.
+    rating: 0,
     followers: 0,
     genres: mapCategoryToUiGenres(item.categoryName),
     description: item.description || "책 소개를 불러오지 못했습니다.",
@@ -477,7 +601,7 @@ function normalizeCoverUrl(cover?: string) {
   return cover.startsWith("http://") ? `https://${cover.slice("http://".length)}` : cover;
 }
 
-function mapReviewRow(row: ReviewRow): Review {
+function mapReviewRow(row: ReviewRow, currentProfileId?: string): Review {
   return {
     id: row.id,
     bookId: row.book_id,
@@ -488,13 +612,7 @@ function mapReviewRow(row: ReviewRow): Review {
     body: row.body,
     likes: row.review_likes?.length ?? 0,
     comments: row.comments?.length ?? 0,
-    date: new Intl.DateTimeFormat("ko-KR", {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit"
-    })
-      .format(new Date(row.created_at))
-      .replaceAll(". ", ".")
-      .replace(".", "")
+    date: formatReviewDate(row.created_at),
+    mine: Boolean(currentProfileId && row.profiles?.id === currentProfileId)
   };
 }
