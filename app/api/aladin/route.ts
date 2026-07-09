@@ -5,6 +5,7 @@ const ALADIN_API_KEY = "ttb2452smile1226002";
 const ALADIN_BASE_URL = "https://www.aladin.co.kr/ttb/api";
 
 type AladinMode = "search" | "lookup" | "bestseller" | "fixed-bestsellers";
+type AladinItem = { isbn13?: string };
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -80,7 +81,7 @@ async function lookupIsbn13(isbn13: string) {
 
 async function lookupIsbn13Batch(isbn13List: string[]) {
   const chunks = chunk(isbn13List, 10);
-  const results = [];
+  const results: AladinItem[] = [];
 
   for (const isbn13Chunk of chunks) {
     const params = new URLSearchParams({
@@ -108,10 +109,17 @@ async function lookupIsbn13Batch(isbn13List: string[]) {
       continue;
     }
 
-    results.push(...data.item);
+    const batchItems = data.item as AladinItem[];
+    const foundIsbn13 = new Set(batchItems.map((item) => item.isbn13).filter(Boolean));
+    const missingIsbn13 = isbn13Chunk.filter((isbn13) => !foundIsbn13.has(isbn13));
+    const missingItems = await Promise.all(missingIsbn13.map((isbn13) => lookupIsbn13(isbn13)));
+
+    results.push(...batchItems, ...missingItems.filter(Boolean));
   }
 
-  return results;
+  return isbn13List
+    .map((isbn13) => results.find((item) => item.isbn13 === isbn13))
+    .filter(Boolean);
 }
 
 function chunk<T>(items: T[], size: number) {

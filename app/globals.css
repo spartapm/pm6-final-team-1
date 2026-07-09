@@ -610,6 +610,7 @@ p {
 
 .chips {
   display: flex;
+  align-items: center;
   flex-wrap: wrap;
   gap: 10px;
 }
@@ -637,12 +638,19 @@ p {
 }
 
 .genre-chips {
-  margin-bottom: 18px;
+  align-items: center;
+  min-height: 42px;
+  margin: -2px 0 18px;
+  padding: 2px 0;
   max-width: 100%;
   overflow-x: auto;
   overflow-y: hidden;
   flex-wrap: nowrap;
   scrollbar-width: none;
+}
+
+.genre-chips .chip {
+  flex: 0 0 auto;
 }
 
 .genre-chips::-webkit-scrollbar,
