@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { BESTSELLER_ISBN13 } from "@/lib/bestseller-isbn13";
 
-const ALADIN_API_KEY = "ttb2452smile1226001";
+const ALADIN_API_KEY = "ttb2452smile1226002";
 const ALADIN_BASE_URL = "https://www.aladin.co.kr/ttb/api";
 
 type AladinMode = "search" | "lookup" | "bestseller" | "fixed-bestsellers";

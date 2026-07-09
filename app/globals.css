@@ -116,7 +116,7 @@ svg {
 }
 
 .with-tab {
-  padding-bottom: 92px;
+  padding-bottom: calc(96px + env(safe-area-inset-bottom));
 }
 
 .screen {
@@ -520,7 +520,8 @@ svg {
   left: 0;
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  height: 74px;
+  height: calc(74px + env(safe-area-inset-bottom));
+  padding-bottom: env(safe-area-inset-bottom);
   border-top: 1px solid var(--line);
   background: rgb(255 255 255 / 96%);
   backdrop-filter: blur(10px);
@@ -549,7 +550,7 @@ svg {
   align-items: center;
   gap: 8px;
   min-height: 48px;
-  margin-bottom: 34px;
+  margin-bottom: 30px;
   padding: 0 12px;
   border: 1.5px solid var(--primary);
   border-radius: 14px;
@@ -561,7 +562,7 @@ svg {
   border: 0;
   outline: 0;
   color: #555555;
-  font-size: 17px;
+  font-size: 16px;
 }
 
 .section-row {
@@ -652,15 +653,21 @@ p {
 .book-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 20px;
+  gap: 12px;
 }
 
 .book-tile {
   position: relative;
   min-width: 0;
-  padding: 14px;
+  padding: 10px;
   border: 1px solid #dddddd;
   border-radius: var(--radius-card);
+  text-align: left;
+}
+
+.book-tile-main {
+  display: block;
+  width: 100%;
   text-align: left;
 }
 
@@ -672,9 +679,15 @@ p {
 }
 
 .book-tile strong {
+  display: -webkit-box;
   margin-top: 2px;
   font-size: 15px;
   line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .book-tile span {
@@ -683,18 +696,18 @@ p {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .book-tile small {
   display: block;
   margin-top: 5px;
   font-weight: 800;
-  font-size: var(--text-caption);
+  font-size: 12px;
 }
 
 .mini-follow {
-  display: none;
+  display: block;
   width: 100%;
   margin-top: 8px;
   padding: 6px;
@@ -703,11 +716,6 @@ p {
   color: white;
   font-size: 12px;
   font-weight: 800;
-}
-
-.book-tile:hover .mini-follow,
-.book-tile:focus-within .mini-follow {
-  display: block;
 }
 
 .mini-follow.following {
@@ -1151,7 +1159,7 @@ p {
   white-space: nowrap;
 }
 
-.profile-copy strong {
+.profile-copy > strong {
   display: block;
   margin: 4px 0 10px;
   font-size: 18px;
@@ -1183,6 +1191,7 @@ p {
   display: block;
   color: var(--primary);
   font-size: 21px;
+  text-decoration: none;
 }
 
 .profile-stats span {
@@ -1215,6 +1224,26 @@ p {
 
 .mypage-review-card .stars {
   justify-self: start;
+}
+
+.mypage-empty {
+  display: grid;
+  gap: 8px;
+  min-height: 180px;
+  padding: 34px 0;
+  border-top: 1px solid #f3f3f3;
+  color: #9a9a9a;
+}
+
+.mypage-empty strong {
+  color: #333333;
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.mypage-empty p {
+  margin: 0;
+  font-size: 14px;
 }
 
 .book-list {

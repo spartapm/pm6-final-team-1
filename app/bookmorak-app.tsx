@@ -750,21 +750,20 @@ function SearchScreen({ query, selectedGenre, following, results, isSyncing, onQ
       ) : (
         <div className="book-grid">
           {results.map((book) => (
-            <button key={book.id} className="book-tile" onClick={() => onBook(book.id)}>
-              <BookCover book={book} />
-              <strong>{book.title}</strong>
-              <span>{book.author}</span>
-              <small>★ {book.rating.toFixed(1)} / 5.0</small>
+            <article key={book.id} className="book-tile">
+              <button className="book-tile-main" onClick={() => onBook(book.id)}>
+                <BookCover book={book} />
+                <strong>{book.title}</strong>
+                <span>{book.author}</span>
+                <small>★ {book.rating.toFixed(1)} / 5.0</small>
+              </button>
               <button
                 className={following.includes(book.id) ? "mini-follow following" : "mini-follow"}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onFollow(book.id);
-                }}
+                onClick={() => onFollow(book.id)}
               >
                 {following.includes(book.id) ? "팔로잉" : "팔로우"}
               </button>
-            </button>
+            </article>
           ))}
         </div>
       )}
@@ -912,19 +911,26 @@ function MyPageScreen({ reviews, profile, bookCatalog, followingCount, onSetting
         </div>
       </div>
       <h2>게시글</h2>
-      {reviews.map((review) => (
-        <ReviewCard
-          key={review.id}
-          review={review}
-          book={bookCatalog.find((book) => book.id === review.bookId) ?? bookCatalog[0] ?? fixedBookPreviews[0]}
-          onBook={() => onBook(review.bookId)}
-          onPost={() => onPost(review.id)}
-          onLike={() => onToast("내 게시글에도 좋아요를 남겼어요.")}
-          onMore={() => onMore(review.id)}
-          onToast={onToast}
-          variant="mypage"
-        />
-      ))}
+      {reviews.length === 0 ? (
+        <div className="mypage-empty">
+          <strong>작성한 게시글이 없습니다.</strong>
+          <p>책을 선택하고 첫 감상을 남겨보세요.</p>
+        </div>
+      ) : (
+        reviews.map((review) => (
+          <ReviewCard
+            key={review.id}
+            review={review}
+            book={bookCatalog.find((book) => book.id === review.bookId) ?? bookCatalog[0] ?? fixedBookPreviews[0]}
+            onBook={() => onBook(review.bookId)}
+            onPost={() => onPost(review.id)}
+            onLike={() => onToast("내 게시글에도 좋아요를 남겼어요.")}
+            onMore={() => onMore(review.id)}
+            onToast={onToast}
+            variant="mypage"
+          />
+        ))
+      )}
     </section>
   );
 }
