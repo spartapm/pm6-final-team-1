@@ -97,9 +97,11 @@ export function BookmorakApp() {
   const [reportReason, setReportReason] = useState("스팸/홍보성");
   const [sortBy, setSortBy] = useState<"latest" | "popular">("latest");
   const [policyReturn, setPolicyReturn] = useState<Screen>("settings");
+  const [bookReturnScreen, setBookReturnScreen] = useState<Screen>("home");
   const [profile, setProfile] = useState<Profile | null>(null);
   const isSyncing = false;
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const prefetchedBookIdsRef = useRef<Set<string>>(new Set());
 
   const activeBook = liveBooks.find((book) => book.id === activeBookId) ?? liveBooks[0] ?? fixedBookPreviews[0];
   const activePost = reviews.find((review) => review.id === activePostId) ?? reviews[0];
@@ -208,12 +210,39 @@ export function BookmorakApp() {
     return bookReviews;
   }, [activeBook.id, reviews, sortBy]);
 
+  useEffect(() => {
+    if (screen !== "search") return;
+
+    const coverlessBooks = filteredBooks
+      .filter((book) => !book.cover && !prefetchedBookIdsRef.current.has(book.id))
+      .slice(0, 12);
+
+    if (coverlessBooks.length === 0) return;
+
+    let isCancelled = false;
+    coverlessBooks.forEach((book) => prefetchedBookIdsRef.current.add(book.id));
+
+    Promise.all(coverlessBooks.map((book) => fetchAladinBookDetail(book.id).catch(() => null))).then((details) => {
+      if (isCancelled) return;
+
+      const nextBooks = details.filter(Boolean) as Book[];
+      if (nextBooks.length > 0) {
+        setLiveBooks((prev) => mergeBooks(prev, nextBooks));
+      }
+    });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [filteredBooks, screen]);
+
   const showToast = (message: string) => {
     setToast(message);
     window.setTimeout(() => setToast(""), 1800);
   };
 
-  const openBook = async (bookId: string) => {
+  const openBook = async (bookId: string, returnScreen: Screen = screen) => {
+    setBookReturnScreen(returnScreen);
     setActiveBookId(bookId);
     setScreen("book");
 
@@ -461,7 +490,7 @@ export function BookmorakApp() {
             following={following.includes(activeBook.id)}
             likedPosts={likedPosts}
             sortBy={sortBy}
-            onBack={() => setScreen("home")}
+            onBack={() => setScreen(bookReturnScreen)}
             onFollow={() => toggleFollow(activeBook.id)}
             onWrite={() => setScreen("write")}
             onPost={openPost}
