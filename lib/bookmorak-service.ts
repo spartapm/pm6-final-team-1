@@ -327,7 +327,16 @@ async function getAccessToken() {
   const {
     data: { session }
   } = await supabase.auth.getSession();
-  return session?.access_token ?? "";
+
+  if (session?.access_token) {
+    return session.access_token;
+  }
+
+  const {
+    data: { session: refreshed }
+  } = await supabase.auth.refreshSession();
+
+  return refreshed?.access_token ?? "";
 }
 
 async function postBookAction(body: Record<string, unknown>) {

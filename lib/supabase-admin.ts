@@ -11,6 +11,13 @@ export function createAdminClient() {
 export async function getAuthedUser(accessToken: string): Promise<User | null> {
   if (!accessToken) return null;
 
+  // Prefer service-role validation so publishable-key edge cases don't block writes.
+  const admin = createAdminClient();
+  const viaAdmin = await admin.auth.getUser(accessToken);
+  if (!viaAdmin.error && viaAdmin.data.user) {
+    return viaAdmin.data.user;
+  }
+
   const userClient = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
     global: { headers: { Authorization: `Bearer ${accessToken}` } }
   });
@@ -41,23 +48,33 @@ export async function getProfileIdForUser(admin: SupabaseClient, user: User) {
     "독서광";
   const tag = String(Math.floor(Math.random() * 10000)).padStart(4, "0");
 
+  // Prefer insert-only. Production may have an updated_at trigger without the column,
+  // which breaks upsert/update on profiles.
   const { data: created, error } = await admin
     .from("profiles")
-    .upsert(
-      {
-        auth_user_id: user.id,
-        email: user.email ?? "",
-        nickname,
-        tag,
-        avatar_url: (metadata.avatar_url as string | undefined) || null
-      },
-      { onConflict: "auth_user_id" }
-    )
+    .insert({
+      auth_user_id: user.id,
+      email: user.email ?? "",
+      nickname,
+      tag,
+      avatar_url: (metadata.avatar_url as string | undefined) || null
+    })
     .select("id")
-    .single();
+    .maybeSingle();
 
-  if (error) throw error;
-  return created.id as string;
+  if (!error && created?.id) {
+    return created.id as string;
+  }
+
+  // Trigger may have already created the row.
+  const { data: again } = await admin
+    .from("profiles")
+    .select("id")
+    .eq("auth_user_id", user.id)
+    .maybeSingle();
+
+  if (again?.id) return again.id as string;
+  throw error || new Error("프로필을 준비하지 못했습니다.");
 }
 
 export type BookPayload = {
@@ -77,26 +94,31 @@ export async function adminUpsertBook(admin: SupabaseClient, book: BookPayload) 
   const isbn13 = book.isbn13 || (book.id.length === 13 ? book.id : null);
   const bookId = isbn13 || book.isbn || book.id;
 
-  const { data, error } = await admin
-    .from("books")
-    .upsert(
-      {
-        id: bookId,
-        title: book.title ?? null,
-        author: book.author ?? null,
-        cover_url: book.cover || null,
-        description: book.description ?? null,
-        genres: book.genres ?? [],
-        aladin_isbn: book.isbn ?? null,
-        aladin_isbn13: isbn13,
-        aladin_item_id: book.aladinItemId ?? null,
-        aladin_category_name: book.categoryName ?? book.genres?.[0] ?? null
-      },
-      { onConflict: "id" }
-    )
-    .select("id")
-    .single();
+  // Production books table currently has a narrower column set than schema.sql.
+  // Only write columns that exist there to avoid PostgREST schema-cache errors.
+  const baseRow = {
+    id: bookId,
+    title: book.title ?? null,
+    author: book.author ?? null,
+    cover_url: book.cover || null,
+    description: book.description ?? null,
+    genres: book.genres ?? [],
+    aladin_isbn: book.isbn ?? isbn13 ?? null
+  };
 
-  if (error) throw error;
-  return data.id as string;
+  const { data, error } = await admin.from("books").upsert(baseRow, { onConflict: "id" }).select("id").single();
+
+  if (!error && data?.id) {
+    return data.id as string;
+  }
+
+  // Fallback: insert if missing, ignore update-trigger failures on existing rows.
+  const { data: existing } = await admin.from("books").select("id").eq("id", bookId).maybeSingle();
+  if (existing?.id) {
+    return existing.id as string;
+  }
+
+  const { data: inserted, error: insertError } = await admin.from("books").insert(baseRow).select("id").single();
+  if (insertError) throw insertError;
+  return inserted.id as string;
 }
