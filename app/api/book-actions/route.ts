@@ -16,6 +16,15 @@ type Body = {
   isDraft?: boolean;
 };
 
+function errorMessage(error: unknown) {
+  if (error instanceof Error && error.message) return error.message;
+  if (error && typeof error === "object" && "message" in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string" && message.trim()) return message;
+  }
+  return "서버 저장에 실패했습니다.";
+}
+
 export async function POST(request: Request) {
   const authHeader = request.headers.get("authorization");
   const accessToken = authHeader?.replace(/^Bearer\s+/i, "") ?? "";
@@ -43,17 +52,15 @@ export async function POST(request: Request) {
     }
 
     if (payload.action === "follow" || payload.action === "unfollow") {
-      const bookId = payload.bookId || payload.book?.id;
-      if (!bookId) {
+      const requestedBookId = payload.bookId || payload.book?.id;
+      if (!requestedBookId) {
         return NextResponse.json({ error: "bookId가 필요합니다." }, { status: 400 });
       }
 
-      if (payload.book) {
-        await adminUpsertBook(admin, payload.book);
-      } else {
-        // Ensure FK target exists even if only an ISBN was provided.
-        await adminUpsertBook(admin, { id: bookId });
-      }
+      // Always use the resolved books.id so follow/review FKs match the upserted row.
+      const bookId = payload.book
+        ? await adminUpsertBook(admin, payload.book)
+        : await adminUpsertBook(admin, { id: requestedBookId });
 
       if (payload.action === "follow") {
         const { error } = await admin.from("book_follows").upsert(
@@ -70,11 +77,11 @@ export async function POST(request: Request) {
     }
 
     if (payload.action === "review") {
-      const bookId = payload.bookId || payload.book?.id;
+      const requestedBookId = payload.bookId || payload.book?.id;
       const rating = Number(payload.rating ?? 0);
       const body = (payload.body ?? "").trim();
 
-      if (!bookId) {
+      if (!requestedBookId) {
         return NextResponse.json({ error: "bookId가 필요합니다." }, { status: 400 });
       }
       if (rating < 1 || rating > 5) {
@@ -84,11 +91,9 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "감상은 30자 이상 1000자 이하여야 합니다." }, { status: 400 });
       }
 
-      if (payload.book) {
-        await adminUpsertBook(admin, payload.book);
-      } else {
-        await adminUpsertBook(admin, { id: bookId });
-      }
+      const bookId = payload.book
+        ? await adminUpsertBook(admin, payload.book)
+        : await adminUpsertBook(admin, { id: requestedBookId });
 
       const { data, error } = await admin
         .from("reviews")
@@ -108,7 +113,6 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ error: "지원하지 않는 action입니다." }, { status: 400 });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "서버 저장에 실패했습니다.";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: errorMessage(error) }, { status: 500 });
   }
 }
