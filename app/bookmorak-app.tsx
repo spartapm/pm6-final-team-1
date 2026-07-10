@@ -34,7 +34,8 @@ import commentIcon from "../team-1-icons/(댓글) 홈 피드, 게시글 상세�
 import startCharacterIcon from "../team-1-icons/캐릭터 일러스트-시작, 로그인.svg";
 import startLogoIcon from "../team-1-icons/로고명.svg";
 import startServiceIcon from "../team-1-icons/서비스명.svg";
-import startBgIcon from "../team-1-icons/image 1 (Traced).svg";
+import startBgIcon from "../team-1-icons/시작화면-배경.png";
+import defaultAvatarIcon from "../team-1-icons/기본 프로필.svg";
 import { genres, recentSearches as defaultRecentSearches, type Book, type Review } from "./data";
 import { supabase, supabaseUrl } from "@/lib/supabase";
 import { BESTSELLER_ISBN13, BESTSELLER_PREVIEW } from "@/lib/bestseller-isbn13";
@@ -93,11 +94,43 @@ type IconSource = StaticImageData | string;
 
 const currentUser = {
   name: "독서광",
-  tag: "#0000",
+  tag: "",
   email: "",
   intro: "아직 소개글이 없습니다.",
-  avatar: "📚"
+  avatar: ""
 };
+
+const ONBOARDING_BOOKS_KEY = "bookmorak:onboarding-books";
+
+function readStoredOnboardingBooks() {
+  if (typeof window === "undefined") return [] as string[];
+  try {
+    const raw = window.sessionStorage.getItem(ONBOARDING_BOOKS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as string[];
+    return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeStoredOnboardingBooks(bookIds: string[]) {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(ONBOARDING_BOOKS_KEY, JSON.stringify(bookIds));
+  } catch {
+    // ignore quota errors
+  }
+}
+
+function clearStoredOnboardingBooks() {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(ONBOARDING_BOOKS_KEY);
+  } catch {
+    // ignore
+  }
+}
 
 const fixedBookPreviews: Book[] = BESTSELLER_PREVIEW.map((book) => ({
   id: book.isbn13,
@@ -117,16 +150,18 @@ export function BookmorakApp() {
   const [query, setQuery] = useState("");
   const [selectedGenre, setSelectedGenre] = useState("전체");
   const [liveBooks, setLiveBooks] = useState<Book[]>(fixedBookPreviews);
-  const [selectedBooks, setSelectedBooks] = useState<string[]>([]);
+  const [selectedBooks, setSelectedBooks] = useState<string[]>(() => readStoredOnboardingBooks());
   const [following, setFollowing] = useState<string[]>([]);
   const [likedPosts, setLikedPosts] = useState<string[]>([]);
   const [likedComments, setLikedComments] = useState<string[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
+  const [bookDetailReviews, setBookDetailReviews] = useState<Review[]>([]);
   const [postComments, setPostComments] = useState<CommentItem[]>([]);
   const [draftRating, setDraftRating] = useState(0);
   const [draftBody, setDraftBody] = useState("");
   const [editingReviewId, setEditingReviewId] = useState<string | null>(null);
   const [recentSearchTerms, setRecentSearchTerms] = useState<string[]>(defaultRecentSearches);
+  const [sessionEmail, setSessionEmail] = useState("");
   const [toast, setToast] = useState("");
   const [modal, setModal] = useState<ModalType>(null);
   const [reportReason, setReportReason] = useState("스팸/홍보성");
@@ -138,6 +173,8 @@ export function BookmorakApp() {
   const isSyncing = false;
   const fileInputRef = useRef<HTMLInputElement>(null);
   const prefetchedBookIdsRef = useRef<Set<string>>(new Set());
+  const liveBooksRef = useRef(liveBooks);
+  liveBooksRef.current = liveBooks;
 
   const activeBook = liveBooks.find((book) => book.id === activeBookId) ?? liveBooks[0] ?? fixedBookPreviews[0];
   const activePost = reviews.find((review) => review.id === activePostId) ?? reviews[0];
@@ -151,9 +188,45 @@ export function BookmorakApp() {
       setScreen("home");
 
       try {
+        const {
+          data: { session }
+        } = await supabase.auth.getSession();
+        if (session?.user?.email) {
+          setSessionEmail(session.user.email);
+        }
+
         const nextProfile = await getCurrentProfile();
-        if (isMounted && nextProfile) {
-          setProfile(nextProfile);
+        if (!isMounted || !nextProfile) return;
+
+        setProfile(nextProfile);
+
+        const pendingBooks = readStoredOnboardingBooks();
+        if (pendingBooks.length > 0) {
+          for (const bookId of pendingBooks) {
+            const targetBook = liveBooksRef.current.find((book) => book.id === bookId);
+            if (targetBook) {
+              await upsertBook(targetBook).catch(() => undefined);
+            }
+            await toggleBookFollow(nextProfile.id, bookId, true).catch(() => undefined);
+          }
+          clearStoredOnboardingBooks();
+          setSelectedBooks([]);
+        }
+
+        const [dbFollows, dbReviews] = await Promise.all([
+          listFollowingBookIds(nextProfile.id).catch(() => []),
+          listFeedReviews([], nextProfile.id).catch(() => [])
+        ]);
+
+        if (!isMounted) return;
+        setFollowing(dbFollows);
+        if (dbReviews.length > 0) {
+          setReviews(
+            dbReviews.map((review) => ({
+              ...review,
+              mine: review.mine || review.user === nextProfile.nickname
+            }))
+          );
         }
       } catch {
         // The product should still be usable when OAuth succeeds before the profile row is ready.
@@ -165,12 +238,17 @@ export function BookmorakApp() {
     } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === "SIGNED_OUT") {
         setProfile(null);
+        setFollowing([]);
+        setSessionEmail("");
         setScreen("start");
         return;
       }
 
-      if (session?.user) {
-        enterAuthenticatedApp();
+      if (session?.user && (event === "SIGNED_IN" || event === "INITIAL_SESSION" || event === "TOKEN_REFRESHED")) {
+        if (session.user.email) setSessionEmail(session.user.email);
+        if (event === "SIGNED_IN" || event === "INITIAL_SESSION") {
+          void enterAuthenticatedApp();
+        }
       }
     });
 
@@ -186,6 +264,7 @@ export function BookmorakApp() {
         const currentProfile = session?.user ? await getCurrentProfile().catch(() => null) : null;
         if (!isMounted) return;
 
+        if (session?.user?.email) setSessionEmail(session.user.email);
         setProfile(currentProfile);
         if (session?.user || currentProfile) {
           setScreen("home");
@@ -259,14 +338,12 @@ export function BookmorakApp() {
   }, [profile, reviews]);
 
   const sortedBookReviews = useMemo(() => {
-    const bookReviews = reviews.filter((review) => review.bookId === activeBook.id);
-
+    const source = bookDetailReviews.length > 0 ? bookDetailReviews : reviews.filter((review) => review.bookId === activeBook.id);
     if (sortBy === "popular") {
-      return [...bookReviews].sort((a, b) => b.likes - a.likes);
+      return [...source].sort((a, b) => b.likes - a.likes);
     }
-
-    return bookReviews;
-  }, [activeBook.id, reviews, sortBy]);
+    return source;
+  }, [activeBook.id, bookDetailReviews, reviews, sortBy]);
 
   useEffect(() => {
     if (screen !== "search" && screen !== "home") return;
@@ -302,13 +379,19 @@ export function BookmorakApp() {
   const openBook = async (bookId: string, returnScreen: Screen = screen) => {
     setBookReturnScreen(returnScreen);
     setActiveBookId(bookId);
+    setBookDetailReviews([]);
     setScreen("book");
 
     try {
       const [detailedBook, bookReviews] = await Promise.all([
         fetchAladinBookDetail(bookId).catch(() => null),
-        listBookReviews(bookId, sortBy, profile?.id).catch(() => [])
+        listBookReviews(bookId, sortBy, profile?.id)
       ]);
+
+      setBookDetailReviews(bookReviews);
+      if (bookReviews.length > 0) {
+        setReviews((prev) => mergeReviews(prev, bookReviews));
+      }
 
       if (detailedBook) {
         const userAverage =
@@ -319,14 +402,11 @@ export function BookmorakApp() {
           mergeBooks(prev, [
             {
               ...detailedBook,
-              rating: userAverage
+              rating: userAverage,
+              followers: prev.find((book) => book.id === bookId)?.followers ?? detailedBook.followers
             }
           ])
         );
-      }
-
-      if (bookReviews.length > 0) {
-        setReviews((prev) => mergeReviews(prev, bookReviews));
       }
     } catch {
       showToast("책 상세 정보를 불러오지 못했습니다.");
@@ -363,21 +443,27 @@ export function BookmorakApp() {
     setScreen("write");
   };
 
-  const persistOnboardingFollows = async (nextProfile: Profile) => {
-    if (selectedBooks.length === 0) return;
+  const persistOnboardingFollows = async (nextProfile: Profile, bookIds = selectedBooks) => {
+    if (bookIds.length === 0) return;
 
-    for (const bookId of selectedBooks) {
-      const targetBook = liveBooks.find((book) => book.id === bookId);
+    for (const bookId of bookIds) {
+      const targetBook = liveBooksRef.current.find((book) => book.id === bookId);
       if (targetBook) {
-        await upsertBook(targetBook).catch(() => undefined);
+        await upsertBook(targetBook);
       }
-      await toggleBookFollow(nextProfile.id, bookId, true).catch(() => undefined);
+      await toggleBookFollow(nextProfile.id, bookId, true);
     }
 
-    setFollowing((prev) => Array.from(new Set([...prev, ...selectedBooks])));
+    setFollowing((prev) => Array.from(new Set([...prev, ...bookIds])));
+    clearStoredOnboardingBooks();
   };
 
   const toggleFollow = async (bookId: string) => {
+    if (!profile) {
+      showToast("로그인 후 팔로우할 수 있습니다.");
+      return;
+    }
+
     const shouldFollow = !following.includes(bookId);
     setFollowing((prev) => (prev.includes(bookId) ? prev.filter((id) => id !== bookId) : [...prev, bookId]));
     setLiveBooks((prev) =>
@@ -387,11 +473,6 @@ export function BookmorakApp() {
           : book
       )
     );
-
-    if (!profile) {
-      showToast("로그인 후 서버에 팔로우가 저장됩니다.");
-      return;
-    }
 
     try {
       const targetBook = liveBooks.find((book) => book.id === bookId);
@@ -469,19 +550,26 @@ export function BookmorakApp() {
       return;
     }
 
+    if (!profile) {
+      showToast("로그인 후 감상을 등록할 수 있습니다.");
+      return;
+    }
+
     const trimmedBody = draftBody.trim();
 
     try {
       await upsertBook(activeBook);
 
-      if (editingReviewId && profile) {
+      if (editingReviewId) {
         await updateReview(editingReviewId, draftRating, trimmedBody);
-        setReviews((prev) =>
-          prev.map((review) =>
-            review.id === editingReviewId
-              ? { ...review, rating: draftRating, body: trimmedBody, date: formatReviewDate() }
-              : review
-          )
+        const updated = {
+          rating: draftRating,
+          body: trimmedBody,
+          date: formatReviewDate()
+        };
+        setReviews((prev) => prev.map((review) => (review.id === editingReviewId ? { ...review, ...updated } : review)));
+        setBookDetailReviews((prev) =>
+          prev.map((review) => (review.id === editingReviewId ? { ...review, ...updated } : review))
         );
         setEditingReviewId(null);
         setDraftBody("");
@@ -491,17 +579,14 @@ export function BookmorakApp() {
         return;
       }
 
-      let createdId = `r${Date.now()}`;
-      if (profile) {
-        createdId = await createReview(profile.id, activeBook.id, draftRating, trimmedBody);
-      }
+      const createdId = await createReview(profile.id, activeBook.id, draftRating, trimmedBody);
 
       const nextReview: Review = {
         id: createdId,
         bookId: activeBook.id,
-        user: profile?.nickname ?? currentUser.name,
-        tag: profile?.tag ? `#${profile.tag}` : currentUser.tag,
-        avatar: profile?.avatar_url ?? currentUser.avatar,
+        user: profile.nickname ?? currentUser.name,
+        tag: profile.tag ? `#${profile.tag}` : "",
+        avatar: profile.avatar_url || "",
         rating: draftRating,
         body: trimmedBody,
         likes: 0,
@@ -511,12 +596,12 @@ export function BookmorakApp() {
       };
 
       setReviews((prev) => [nextReview, ...prev]);
+      setBookDetailReviews((prev) => [nextReview, ...prev]);
       setLiveBooks((prev) => {
-        const related = reviews.filter((review) => review.bookId === activeBook.id);
-        const bookReviews = [nextReview, ...related];
+        const related = [nextReview, ...reviews.filter((review) => review.bookId === activeBook.id)];
         const average =
-          bookReviews.length > 0
-            ? Math.round((bookReviews.reduce((sum, review) => sum + review.rating, 0) / bookReviews.length) * 10) / 10
+          related.length > 0
+            ? Math.round((related.reduce((sum, review) => sum + review.rating, 0) / related.length) * 10) / 10
             : draftRating;
         return mergeBooks(prev, [{ ...activeBook, rating: average }]);
       });
@@ -524,8 +609,9 @@ export function BookmorakApp() {
       setDraftRating(0);
       setScreen("book");
       showToast("등록되었습니다.");
-    } catch {
-      showToast("서버 저장에 실패했습니다.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      showToast(message || "서버 저장에 실패했습니다.");
     }
   };
 
@@ -538,7 +624,12 @@ export function BookmorakApp() {
     try {
       const loggedInProfile = await signInWithEmail(email, password);
       setProfile(loggedInProfile);
+      setSessionEmail(email);
       if (loggedInProfile) {
+        const pendingBooks = readStoredOnboardingBooks();
+        if (pendingBooks.length > 0) {
+          await persistOnboardingFollows(loggedInProfile, pendingBooks).catch(() => undefined);
+        }
         const [dbFollows, dbReviews] = await Promise.all([
           listFollowingBookIds(loggedInProfile.id),
           listFeedReviews([], loggedInProfile.id)
@@ -550,7 +641,16 @@ export function BookmorakApp() {
       }
       setScreen("home");
       showToast("로그인 되었습니다.");
-    } catch {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (message === "EMAIL_NOT_CONFIRMED") {
+        showToast("이메일 인증 후 로그인해 주세요.");
+        return;
+      }
+      if (message === "PROFILE_NOT_READY") {
+        showToast("프로필을 준비 중입니다. 잠시 후 다시 시도해 주세요.");
+        return;
+      }
       showToast("이메일 또는 비밀번호를 확인해주세요.");
     }
   };
@@ -564,10 +664,14 @@ export function BookmorakApp() {
     try {
       const createdProfile = await signUpWithEmail(email, password, nickname);
       setProfile(createdProfile);
+      setSessionEmail(email);
       if (createdProfile) {
-        await persistOnboardingFollows(createdProfile);
-        const feed = await listFeedReviews(selectedBooks, createdProfile.id).catch(() => []);
+        const pendingBooks = selectedBooks.length > 0 ? selectedBooks : readStoredOnboardingBooks();
+        await persistOnboardingFollows(createdProfile, pendingBooks);
+        const feed = await listFeedReviews(pendingBooks, createdProfile.id).catch(() => []);
         if (feed.length > 0) setReviews(feed);
+        const dbFollows = await listFollowingBookIds(createdProfile.id).catch(() => pendingBooks);
+        setFollowing(dbFollows.length > 0 ? dbFollows : pendingBooks);
       }
       setScreen("home");
       showToast("계정이 생성되었습니다.");
@@ -577,7 +681,12 @@ export function BookmorakApp() {
         showToast("이미 가입된 이메일입니다.");
         return;
       }
-      showToast("계정 생성에 실패했습니다.");
+      if (message === "PROFILE_NOT_READY") {
+        showToast("계정은 생성됐지만 프로필 준비에 실패했습니다. 로그인해 주세요.");
+        setScreen("login");
+        return;
+      }
+      showToast(message || "계정 생성에 실패했습니다.");
     }
   };
 
@@ -655,7 +764,13 @@ export function BookmorakApp() {
             selectedGenre={selectedGenre}
             onBack={() => setScreen("start")}
             onGenre={setSelectedGenre}
-            onToggleBook={(bookId) => setSelectedBooks((prev) => (prev.includes(bookId) ? prev.filter((id) => id !== bookId) : [...prev, bookId]))}
+            onToggleBook={(bookId) =>
+              setSelectedBooks((prev) => {
+                const next = prev.includes(bookId) ? prev.filter((id) => id !== bookId) : [...prev, bookId];
+                writeStoredOnboardingBooks(next);
+                return next;
+              })
+            }
             onNext={() => setScreen("preview")}
           />
         )}
@@ -707,11 +822,11 @@ export function BookmorakApp() {
               results={filteredBooks}
               recentSearches={recentSearchTerms}
               isSyncing={isSyncing}
-              onQuery={(nextQuery) => {
-                setQuery(nextQuery);
-                if (nextQuery.trim()) {
-                  setRecentSearchTerms((prev) => [nextQuery.trim(), ...prev.filter((item) => item !== nextQuery.trim())].slice(0, 10));
-                }
+              onQuery={setQuery}
+              onCommitQuery={(term) => {
+                const next = term.trim();
+                if (!next) return;
+                setRecentSearchTerms((prev) => [next, ...prev.filter((item) => item !== next)].slice(0, 10));
               }}
               onClearRecent={() => setRecentSearchTerms([])}
               onRemoveRecent={(term) => setRecentSearchTerms((prev) => prev.filter((item) => item !== term))}
@@ -740,7 +855,7 @@ export function BookmorakApp() {
         )}
         {screen === "write-pick" && (
           <WritePickScreen
-            books={following.length > 0 ? liveBooks.filter((book) => following.includes(book.id)) : liveBooks}
+            books={liveBooks}
             onBack={() => setScreen(writeReturnScreen)}
             onPick={(bookId) => openWriteForBook(bookId, writeReturnScreen)}
           />
@@ -779,7 +894,7 @@ export function BookmorakApp() {
         {screen === "settings" && <SettingsScreen onBack={() => setScreen("mypage")} onTerms={() => { setPolicyReturn("settings"); setScreen("terms"); }} onPrivacy={() => { setPolicyReturn("settings"); setScreen("privacy"); }} onLogout={() => setModal("logout")} onDeleteAccount={() => setModal("deleteAccount")} onToast={showToast} />}
         {screen === "terms" && <PolicyScreen title="이용약관 정보" onBack={() => setScreen(policyReturn)} />}
         {screen === "privacy" && <PolicyScreen title="개인정보 수집 및 이용 정보" onBack={() => setScreen(policyReturn)} privacy />}
-        {screen === "profile" && <ProfileScreen profile={profile} onBack={() => setScreen("mypage")} onPassword={() => setScreen("password")} onPhoto={() => setModal("profilePhoto")} onSave={async (values) => {
+        {screen === "profile" && <ProfileScreen profile={profile} sessionEmail={sessionEmail} onBack={() => setScreen("mypage")} onPassword={() => setScreen("password")} onPhoto={() => setModal("profilePhoto")} onSave={async (values) => {
           if (!profile) {
             showToast("로그인 후 프로필을 저장할 수 있습니다.");
             return;
@@ -996,6 +1111,7 @@ function SearchScreen({
   recentSearches,
   isSyncing,
   onQuery,
+  onCommitQuery,
   onClearRecent,
   onRemoveRecent,
   onGenre,
@@ -1009,6 +1125,7 @@ function SearchScreen({
   recentSearches: string[];
   isSyncing: boolean;
   onQuery: (query: string) => void;
+  onCommitQuery: (query: string) => void;
   onClearRecent: () => void;
   onRemoveRecent: (term: string) => void;
   onGenre: (genre: string) => void;
@@ -1019,7 +1136,15 @@ function SearchScreen({
     <section className="screen">
       <label className="search-box">
         <IconAsset src={searchFieldIcon} alt="" size={20} />
-        <input value={query} onChange={(event) => onQuery(event.target.value)} placeholder="검색어를 입력해 주세요." />
+        <input
+          value={query}
+          onChange={(event) => onQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") onCommitQuery(query);
+          }}
+          onBlur={() => onCommitQuery(query)}
+          placeholder="검색어를 입력해 주세요."
+        />
         {query && (
           <button onClick={() => onQuery("")} aria-label="검색어 삭제">
             <IconAsset src={deleteIcon} alt="" size={18} />
@@ -1036,7 +1161,14 @@ function SearchScreen({
           </div>
           <div className="chips">
             {recentSearches.map((item) => (
-              <button key={item} className="chip" onClick={() => onQuery(item)}>
+              <button
+                key={item}
+                className="chip"
+                onClick={() => {
+                  onQuery(item);
+                  onCommitQuery(item);
+                }}
+              >
                 {item}
                 <span
                   role="button"
@@ -1120,7 +1252,7 @@ function BookDetailScreen({ book, reviews, following, likedPosts, sortBy, onBack
           <div className="tags">{book.genres.map((genre) => <span key={genre}>{genre}</span>)}</div>
           <div className="book-actions">
             <p>
-              <strong>{formatCount(book.followers + (following ? 1 : 0))}</strong> 팔로워
+              <strong>{formatCount(book.followers)}</strong> 팔로워
             </p>
             <button className={following ? "outline-small active" : "outline-small"} onClick={onFollow}>
               {following ? "팔로잉" : "팔로우"}
@@ -1244,11 +1376,17 @@ function MyPageScreen({ reviews, profile, bookCatalog, followingCount, onSetting
       <Header title="마이페이지" right={<button className="settings-button" onClick={onSettings}><IconAsset src={settingsIcon} alt="설정" size={24} /></button>} />
       <div className="profile-summary">
         <div className="profile-left">
-          <div className="avatar large">{profile?.avatar_url ? <Image src={profile.avatar_url} alt="프로필 이미지" width={104} height={104} unoptimized /> : currentUser.avatar}</div>
+          <div className="avatar large">
+            {profile?.avatar_url ? (
+              <Image src={profile.avatar_url} alt="프로필 이미지" width={104} height={104} unoptimized />
+            ) : (
+              <Image src={defaultAvatarIcon} alt="기본 프로필" width={104} height={104} unoptimized />
+            )}
+          </div>
           <button onClick={onProfile}>프로필 편집</button>
         </div>
         <div className="profile-copy">
-          <strong>{profile?.nickname ?? currentUser.name}{profile?.tag ? `#${profile.tag}` : currentUser.tag}</strong>
+          <strong>{profile?.nickname ?? currentUser.name}{profile?.tag ? `#${profile.tag}` : ""}</strong>
           <p>{profile?.bio ?? currentUser.intro}</p>
           <div className="profile-stats">
             <strong>{reviews.length}<span>게시글</span></strong>
@@ -1466,7 +1604,9 @@ function SignupScreen({ onBack, onKakaoLogin, onDone, onToast, onTerms, onPrivac
   return (
     <section className="screen auth-screen">
       <Header title="계정 생성" onBack={onBack} />
-      <div className="avatar upload">+</div>
+      <div className="avatar upload">
+        <Image src={defaultAvatarIcon} alt="기본 프로필" width={104} height={104} unoptimized />
+      </div>
       <label className="field"><span>닉네임</span><input maxLength={10} value={name} onChange={(event) => setName(event.target.value)} placeholder="닉네임을 입력해주세요" /></label>
       <label className="field"><span>비밀번호</span><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="영문, 숫자, 특수문자 포함 8~16자" /></label>
       <label className="field"><span>비밀번호 확인</span><input type="password" value={passwordConfirm} onChange={(event) => setPasswordConfirm(event.target.value)} placeholder="비밀번호를 다시 입력해주세요" /></label>
@@ -1513,21 +1653,27 @@ function SettingsScreen({ onBack, onTerms, onPrivacy, onLogout, onDeleteAccount,
   );
 }
 
-function ProfileScreen({ profile, onBack, onPassword, onPhoto, onSave }: { profile: Profile | null; onBack: () => void; onPassword: () => void; onPhoto: () => void; onSave: (values: Partial<Pick<Profile, "nickname" | "bio">>) => void }) {
+function ProfileScreen({ profile, sessionEmail, onBack, onPassword, onPhoto, onSave }: { profile: Profile | null; sessionEmail?: string; onBack: () => void; onPassword: () => void; onPhoto: () => void; onSave: (values: Partial<Pick<Profile, "nickname" | "bio">>) => void }) {
   const [nickname, setNickname] = useState(profile?.nickname ?? currentUser.name);
   const [bio, setBio] = useState(profile?.bio ?? currentUser.intro);
-  const email = profile?.email || currentUser.email || "이메일을 불러오지 못했습니다.";
+  const email = profile?.email || sessionEmail || "";
 
   return (
     <section className="screen auth-screen">
       <Header title="프로필 편집" onBack={onBack} right={<button className="save-button" onClick={() => onSave({ nickname, bio })}>완료</button>} />
       <button className="profile-photo-button" onClick={onPhoto}>
-        <span className="avatar upload">{profile?.avatar_url ? <Image src={profile.avatar_url} alt="프로필 이미지" width={104} height={104} unoptimized /> : currentUser.avatar}</span>
+        <span className="avatar upload">
+          {profile?.avatar_url ? (
+            <Image src={profile.avatar_url} alt="프로필 이미지" width={104} height={104} unoptimized />
+          ) : (
+            <Image src={defaultAvatarIcon} alt="기본 프로필" width={104} height={104} unoptimized />
+          )}
+        </span>
         <b aria-hidden="true"><IconAsset src={cameraIcon} alt="" size={16} /></b>
       </button>
       <label className="field"><span>소개글</span><input value={bio} onChange={(event) => setBio(event.target.value)} maxLength={100} /></label>
       <label className="field"><span>닉네임</span><input value={nickname} onChange={(event) => setNickname(event.target.value)} maxLength={10} /></label>
-      <label className="field"><span>이메일</span><input value={email} readOnly /></label>
+      <label className="field"><span>이메일</span><input value={email || "카카오 계정 (이메일 미제공)"} readOnly /></label>
       <button className="outline-button" onClick={onPassword}>비밀번호 변경</button>
     </section>
   );
@@ -1855,7 +2001,11 @@ function UserAvatar({ value }: { value: string }) {
     );
   }
 
-  return <span className="avatar">{value}</span>;
+  return (
+    <span className="avatar">
+      <Image src={defaultAvatarIcon} alt="기본 프로필" width={28} height={28} unoptimized />
+    </span>
+  );
 }
 
 function RatingStars({ rating }: { rating: number }) {
@@ -1939,7 +2089,7 @@ function truncateReviewBody(body: string, limit = 150) {
   return `${cut.trimEnd()}... 더보기`;
 }
 
-const UI_GENRES = new Set(["소설", "에세이", "자기계발", "판타지", "동화", "힐링"]);
+const UI_GENRES = new Set(["소설", "에세이", "자기계발"]);
 
 function preferUiGenres(nextGenres: string[] = [], previousGenres: string[] = []) {
   const nextUseful = nextGenres.filter((genre) => UI_GENRES.has(genre));

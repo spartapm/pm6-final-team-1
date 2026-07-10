@@ -151,4 +151,4 @@ export const reviews: Review[] = [
 
 export const recentSearches = ["불편한 편의점", "역행자", "해리포터", "원빙", "아주 작은 습관의 힘", "날개", "인생은 실전이다", "강아지똥", "마법천자문", "책 먹는 여우"];
 
-export const genres = ["전체", "소설", "에세이", "자기계발", "판타지", "동화", "힐링"];
+export const genres = ["전체", "소설", "에세이", "자기계발"];

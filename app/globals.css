@@ -228,12 +228,13 @@ svg {
   justify-content: flex-end;
   padding: 44px 17px 70px;
   overflow: hidden;
-  background: linear-gradient(180deg, #fff8e8 0%, #ffe9b8 48%, #ffd98a 100%);
+  background: #ffffff;
 }
 
 .start-bg {
   object-fit: cover;
-  opacity: 0.35;
+  object-position: center top;
+  opacity: 1;
   pointer-events: none;
 }
 

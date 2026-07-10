@@ -117,10 +117,61 @@ export async function getCurrentProfile() {
   return createdProfile as Profile | null;
 }
 
+export async function signUpWithEmail(email: string, password: string, nickname: string) {
+  // Create + auto-confirm via server so MVP signup works without email verification.
+  const response = await fetch("/api/signup", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password, nickname })
+  });
+
+  const payload = (await response.json().catch(() => ({}))) as { error?: string };
+
+  if (!response.ok) {
+    if (payload.error === "ALREADY_REGISTERED" || response.status === 409) {
+      throw new Error("ALREADY_REGISTERED");
+    }
+    throw new Error(payload.error || "계정 생성에 실패했습니다.");
+  }
+
+  const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+  if (signInError) throw signInError;
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const profile = await getCurrentProfile();
+    if (profile) {
+      if (profile.nickname !== nickname || profile.email !== email) {
+        try {
+          await supabase.from("profiles").update({ nickname, email }).eq("id", profile.id);
+        } catch {
+          // ignore profile update race
+        }
+        return { ...profile, nickname, email };
+      }
+      return profile;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+
+  throw new Error("PROFILE_NOT_READY");
+}
+
 export async function signInWithEmail(email: string, password: string) {
   const { error } = await supabase.auth.signInWithPassword({ email, password });
-  if (error) throw error;
-  return getCurrentProfile();
+  if (error) {
+    if (/confirm|not confirmed/i.test(error.message)) {
+      throw new Error("EMAIL_NOT_CONFIRMED");
+    }
+    throw error;
+  }
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const profile = await getCurrentProfile();
+    if (profile) return profile;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+
+  throw new Error("PROFILE_NOT_READY");
 }
 
 export async function signInWithKakao() {
@@ -137,35 +188,6 @@ export async function signInWithKakao() {
   });
 
   if (error) throw error;
-}
-
-export async function signUpWithEmail(email: string, password: string, nickname: string) {
-  const { data, error } = await supabase.auth.signUp({
-    email,
-    password,
-    options: {
-      data: { nickname }
-    }
-  });
-
-  if (error) throw error;
-
-  // Supabase may return a user without identities when the email is already registered.
-  if (!data.user || (data.user.identities && data.user.identities.length === 0)) {
-    throw new Error("ALREADY_REGISTERED");
-  }
-
-  await supabase.from("profiles").upsert(
-    {
-      auth_user_id: data.user.id,
-      email,
-      nickname,
-      tag: String(Math.floor(Math.random() * 10000)).padStart(4, "0")
-    },
-    { onConflict: "auth_user_id" }
-  );
-
-  return getCurrentProfile();
 }
 
 export async function deleteCurrentAccount() {
@@ -185,12 +207,8 @@ export async function deleteCurrentAccount() {
   });
 
   if (!response.ok) {
-    // Fallback: at least remove the public profile so the product becomes unusable.
-    const profile = await getCurrentProfile();
-    if (profile) {
-      const { error } = await supabase.from("profiles").delete().eq("id", profile.id);
-      if (error) throw error;
-    }
+    const payload = await response.json().catch(() => ({}));
+    throw new Error((payload as { error?: string }).error || "계정 삭제에 실패했습니다.");
   }
 
   await signOut();
@@ -498,8 +516,8 @@ function mapCommentRow(row: CommentRow): CommentItem {
     reviewId: row.review_id,
     parentId: row.parent_id,
     user: row.profiles?.nickname ?? "독서광",
-    tag: row.profiles?.tag ? `#${row.profiles.tag}` : "#0000",
-    avatar: row.profiles?.avatar_url ?? "📚",
+    tag: row.profiles?.tag ? `#${row.profiles.tag}` : "",
+    avatar: row.profiles?.avatar_url ?? "",
     body: row.body,
     likes: row.comment_likes?.length ?? 0,
     date: formatReviewDate(row.created_at)
@@ -556,19 +574,19 @@ export function mapCategoryToUiGenres(categoryName?: string | null): string[] {
   const text = categoryName ?? "";
   const matched: string[] = [];
 
-  if (/판타지|무협/.test(text)) matched.push("판타지");
+  if (/판타지|무협/.test(text)) matched.push("소설");
   else if (/소설|시\/희곡|희곡|과학소설|SF/.test(text)) matched.push("소설");
 
   if (/에세이/.test(text)) matched.push("에세이");
   if (/자기계발/.test(text)) matched.push("자기계발");
-  if (/동화|유아|어린이|아동/.test(text)) matched.push("동화");
-  if (/힐링/.test(text)) matched.push("힐링");
+  if (/동화|유아|어린이|아동/.test(text)) matched.push("소설");
+  if (/힐링/.test(text)) matched.push("에세이");
 
-  if (matched.length > 0) return matched;
+  if (matched.length > 0) return Array.from(new Set(matched));
 
   // Fall back to the last path segment only when it already matches a UI chip.
   const leaf = text.split(">").at(-1)?.trim() ?? "";
-  const uiGenres = ["소설", "에세이", "자기계발", "판타지", "동화", "힐링"];
+  const uiGenres = ["소설", "에세이", "자기계발"];
   if (uiGenres.includes(leaf)) return [leaf];
 
   return ["도서"];
@@ -606,8 +624,8 @@ function mapReviewRow(row: ReviewRow, currentProfileId?: string): Review {
     id: row.id,
     bookId: row.book_id,
     user: row.profiles?.nickname ?? "독서광",
-    tag: row.profiles?.tag ? `#${row.profiles.tag}` : "#0000",
-    avatar: row.profiles?.avatar_url ?? "📚",
+    tag: row.profiles?.tag ? `#${row.profiles.tag}` : "",
+    avatar: row.profiles?.avatar_url ?? "",
     rating: row.rating,
     body: row.body,
     likes: row.review_likes?.length ?? 0,
