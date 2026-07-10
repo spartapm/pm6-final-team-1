@@ -206,8 +206,10 @@ export function BookmorakApp() {
             const targetBook = liveBooksRef.current.find((book) => book.id === bookId);
             if (targetBook) {
               await upsertBook(targetBook).catch(() => undefined);
+              await toggleBookFollow(nextProfile.id, bookId, true, targetBook).catch(() => undefined);
+            } else {
+              await toggleBookFollow(nextProfile.id, bookId, true).catch(() => undefined);
             }
-            await toggleBookFollow(nextProfile.id, bookId, true).catch(() => undefined);
           }
           clearStoredOnboardingBooks();
           setSelectedBooks([]);
@@ -450,8 +452,10 @@ export function BookmorakApp() {
       const targetBook = liveBooksRef.current.find((book) => book.id === bookId);
       if (targetBook) {
         await upsertBook(targetBook);
+        await toggleBookFollow(nextProfile.id, bookId, true, targetBook);
+      } else {
+        await toggleBookFollow(nextProfile.id, bookId, true);
       }
-      await toggleBookFollow(nextProfile.id, bookId, true);
     }
 
     setFollowing((prev) => Array.from(new Set([...prev, ...bookIds])));
@@ -476,9 +480,12 @@ export function BookmorakApp() {
 
     try {
       const targetBook = liveBooks.find((book) => book.id === bookId);
-      if (targetBook) await upsertBook(targetBook);
-      await toggleBookFollow(profile.id, bookId, shouldFollow);
-    } catch {
+      if (targetBook) {
+        await toggleBookFollow(profile.id, bookId, shouldFollow, targetBook);
+      } else {
+        await toggleBookFollow(profile.id, bookId, shouldFollow);
+      }
+    } catch (error) {
       setFollowing((prev) => (shouldFollow ? prev.filter((id) => id !== bookId) : [...prev, bookId]));
       setLiveBooks((prev) =>
         prev.map((book) =>
@@ -487,7 +494,8 @@ export function BookmorakApp() {
             : book
         )
       );
-      showToast("팔로우 처리에 실패했습니다.");
+      const message = error instanceof Error ? error.message : "";
+      showToast(message || "팔로우 처리에 실패했습니다.");
     }
   };
 
@@ -558,8 +566,6 @@ export function BookmorakApp() {
     const trimmedBody = draftBody.trim();
 
     try {
-      await upsertBook(activeBook);
-
       if (editingReviewId) {
         await updateReview(editingReviewId, draftRating, trimmedBody);
         const updated = {
@@ -579,7 +585,7 @@ export function BookmorakApp() {
         return;
       }
 
-      const createdId = await createReview(profile.id, activeBook.id, draftRating, trimmedBody);
+      const createdId = await createReview(profile.id, activeBook.id, draftRating, trimmedBody, false, activeBook);
 
       const nextReview: Review = {
         id: createdId,

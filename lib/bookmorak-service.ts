@@ -323,31 +323,61 @@ export async function fetchAladinBookDetail(bookId: string) {
   return book;
 }
 
-export async function upsertBook(book: AladinBook | Book) {
-  const aladinBook = book as AladinBook;
-  const isbn13 = aladinBook.isbn13 || (book.id.length === 13 ? book.id : null);
-  const { data, error } = await supabase
-    .from("books")
-    .upsert(
-      {
-        id: isbn13 || aladinBook.isbn || book.id,
-        title: book.title,
-        author: book.author,
-        cover_url: book.cover || null,
-        description: book.description,
-        genres: book.genres,
-        aladin_isbn: aladinBook.isbn ?? null,
-        aladin_isbn13: isbn13,
-        aladin_item_id: aladinBook.aladinItemId ?? null,
-        aladin_category_name: aladinBook.categoryName ?? book.genres[0] ?? null
-      },
-      { onConflict: "id" }
-    )
-    .select("*")
-    .single();
+async function getAccessToken() {
+  const {
+    data: { session }
+  } = await supabase.auth.getSession();
+  return session?.access_token ?? "";
+}
 
-  if (error) throw error;
-  return mapBookRow(data as BookRow);
+async function postBookAction(body: Record<string, unknown>) {
+  const accessToken = await getAccessToken();
+  if (!accessToken) {
+    throw new Error("로그인이 필요합니다.");
+  }
+
+  const response = await fetch("/api/book-actions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`
+    },
+    body: JSON.stringify(body)
+  });
+
+  const payload = (await response.json().catch(() => ({}))) as { error?: string; bookId?: string; reviewId?: string };
+  if (!response.ok) {
+    throw new Error(payload.error || "서버 저장에 실패했습니다.");
+  }
+  return payload;
+}
+
+function toBookPayload(book: AladinBook | Book) {
+  const aladinBook = book as AladinBook;
+  return {
+    id: book.id,
+    title: book.title,
+    author: book.author,
+    cover: book.cover,
+    description: book.description,
+    genres: book.genres,
+    isbn: aladinBook.isbn,
+    isbn13: aladinBook.isbn13 || (book.id.length === 13 ? book.id : undefined),
+    aladinItemId: aladinBook.aladinItemId,
+    categoryName: aladinBook.categoryName
+  };
+}
+
+export async function upsertBook(book: AladinBook | Book) {
+  const payload = await postBookAction({
+    action: "upsert-book",
+    book: toBookPayload(book)
+  });
+
+  return {
+    ...book,
+    id: payload.bookId || book.id
+  } as Book;
 }
 
 export async function listBooks() {
@@ -381,15 +411,21 @@ export async function listBookReviews(bookId: string, sortBy: "latest" | "popula
   return sortBy === "popular" ? mapped.sort((a, b) => b.likes - a.likes) : mapped;
 }
 
-export async function createReview(profileId: string, bookId: string, rating: number, body: string, isDraft = false) {
-  const { data, error } = await supabase
-    .from("reviews")
-    .insert({ user_id: profileId, book_id: bookId, rating, body, is_draft: isDraft })
-    .select("id")
-    .single();
+export async function createReview(profileId: string, bookId: string, rating: number, body: string, isDraft = false, book?: AladinBook | Book) {
+  void profileId;
+  const payload = await postBookAction({
+    action: "review",
+    bookId,
+    rating,
+    body,
+    isDraft,
+    book: book ? toBookPayload(book) : { id: bookId }
+  });
 
-  if (error) throw error;
-  return data.id as string;
+  if (!payload.reviewId) {
+    throw new Error("감상글 저장에 실패했습니다.");
+  }
+  return payload.reviewId;
 }
 
 export async function updateReview(reviewId: string, rating: number, body: string, isDraft = false) {
@@ -402,15 +438,13 @@ export async function deleteReview(reviewId: string) {
   if (error) throw error;
 }
 
-export async function toggleBookFollow(profileId: string, bookId: string, shouldFollow: boolean) {
-  if (shouldFollow) {
-    const { error } = await supabase.from("book_follows").insert({ user_id: profileId, book_id: bookId });
-    if (error && error.code !== "23505") throw error;
-    return;
-  }
-
-  const { error } = await supabase.from("book_follows").delete().eq("user_id", profileId).eq("book_id", bookId);
-  if (error) throw error;
+export async function toggleBookFollow(profileId: string, bookId: string, shouldFollow: boolean, book?: AladinBook | Book) {
+  void profileId;
+  await postBookAction({
+    action: shouldFollow ? "follow" : "unfollow",
+    bookId,
+    book: book ? toBookPayload(book) : { id: bookId }
+  });
 }
 
 export async function listFollowingBookIds(profileId: string) {

@@ -1,8 +1,5 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
-
-const SUPABASE_URL = "https://afnmmsphrsccbdonkgwn.supabase.co";
-const SUPABASE_SERVICE_ROLE_KEY = ["sb", "_secret_", "5rLp-v7xgSQI68YsB-CQLQ", "_eOtrvTsH"].join("");
+import { createAdminClient } from "@/lib/supabase-admin";
 
 export async function POST(request: Request) {
   const body = (await request.json().catch(() => null)) as
@@ -17,7 +14,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "이메일과 비밀번호를 확인해주세요." }, { status: 400 });
   }
 
-  const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+  const admin = createAdminClient();
 
   const { data, error } = await admin.auth.admin.createUser({
     email,
