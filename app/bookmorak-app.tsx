@@ -1261,7 +1261,7 @@ function BookDetailScreen({ book, reviews, following, likedPosts, sortBy, onBack
               <strong>{formatCount(book.followers)}</strong> 팔로워
             </p>
             <button className={following ? "outline-small active" : "outline-small"} onClick={onFollow}>
-              {following ? "팔로잉" : "팔로우"}
+              {following ? "팔로우 취소" : "팔로우"}
             </button>
           </div>
           <button className="primary-button compact" onClick={onWrite}>작성하기</button>

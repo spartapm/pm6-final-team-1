@@ -864,7 +864,7 @@ p {
 
 .detail-screen .book-actions {
   display: grid;
-  grid-template-columns: 1fr 78px;
+  grid-template-columns: 1fr auto;
   gap: 12px;
   margin: 0 0 8px;
   align-items: center;
@@ -886,6 +886,13 @@ p {
   padding: 7px 12px;
   border-radius: 8px;
   background: white;
+  color: var(--primary);
+  white-space: nowrap;
+}
+
+.detail-screen .outline-small.active {
+  background: white;
+  color: var(--primary);
 }
 
 .detail-screen .primary-button.compact {
