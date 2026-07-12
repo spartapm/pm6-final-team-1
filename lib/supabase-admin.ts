@@ -40,13 +40,22 @@ export async function getProfileIdForUser(admin: SupabaseClient, user: User) {
 
   if (existing?.id) return existing.id as string;
 
-  const metadata = user.user_metadata ?? {};
+  const metadata = (user.user_metadata ?? {}) as Record<string, unknown>;
+  const nicknameCandidates = [
+    metadata.nickname,
+    metadata.name,
+    metadata.full_name,
+    metadata.user_name,
+    metadata.preferred_username
+  ];
   const nickname =
-    (metadata.nickname as string | undefined) ||
-    (metadata.name as string | undefined) ||
-    (metadata.full_name as string | undefined) ||
+    nicknameCandidates.find((value): value is string => typeof value === "string" && Boolean(value.trim()))?.trim().slice(0, 10) ||
     "독서광";
   const tag = String(Math.floor(Math.random() * 10000)).padStart(4, "0");
+  const avatarUrl =
+    (typeof metadata.avatar_url === "string" && metadata.avatar_url) ||
+    (typeof metadata.picture === "string" && metadata.picture) ||
+    null;
 
   // Prefer insert-only. Production may have an updated_at trigger without the column,
   // which breaks upsert/update on profiles.
@@ -57,7 +66,7 @@ export async function getProfileIdForUser(admin: SupabaseClient, user: User) {
       email: user.email ?? "",
       nickname,
       tag,
-      avatar_url: (metadata.avatar_url as string | undefined) || null
+      avatar_url: avatarUrl
     })
     .select("id")
     .maybeSingle();
@@ -66,14 +75,19 @@ export async function getProfileIdForUser(admin: SupabaseClient, user: User) {
     return created.id as string;
   }
 
-  // Trigger may have already created the row.
+  // Trigger may have already created the row with the default nickname.
   const { data: again } = await admin
     .from("profiles")
-    .select("id")
+    .select("id, nickname")
     .eq("auth_user_id", user.id)
     .maybeSingle();
 
-  if (again?.id) return again.id as string;
+  if (again?.id) {
+    if (again.nickname === "독서광" && nickname !== "독서광") {
+      await admin.from("profiles").update({ nickname, avatar_url: avatarUrl }).eq("id", again.id);
+    }
+    return again.id as string;
+  }
   throw error || new Error("프로필을 준비하지 못했습니다.");
 }
 

@@ -69,6 +69,32 @@ export type AladinBook = Book & {
 
 const fallbackCover = "";
 
+function nicknameFromMetadata(metadata: Record<string, unknown> | null | undefined, fallback = "독서광") {
+  const values = [
+    metadata?.nickname,
+    metadata?.name,
+    metadata?.full_name,
+    metadata?.user_name,
+    metadata?.preferred_username
+  ];
+
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) {
+      return value.trim().slice(0, 10);
+    }
+  }
+
+  return fallback;
+}
+
+function avatarFromMetadata(metadata: Record<string, unknown> | null | undefined) {
+  const avatar =
+    (typeof metadata?.avatar_url === "string" && metadata.avatar_url) ||
+    (typeof metadata?.picture === "string" && metadata.picture) ||
+    null;
+  return avatar;
+}
+
 export async function getCurrentProfile() {
   const {
     data: { session }
@@ -84,20 +110,39 @@ export async function getCurrentProfile() {
     throw error;
   }
 
-  if (data) {
-    return data as Profile;
-  }
+  const metadata = (session.user.user_metadata ?? {}) as Record<string, unknown>;
+  const nickname = nicknameFromMetadata(metadata);
+  const avatarUrl = avatarFromMetadata(metadata);
 
-  const metadata = session.user.user_metadata ?? {};
-  const nickname =
-    (metadata.nickname as string | undefined) ||
-    (metadata.name as string | undefined) ||
-    (metadata.full_name as string | undefined) ||
-    "독서광";
-  const avatarUrl =
-    (metadata.avatar_url as string | undefined) ||
-    (metadata.picture as string | undefined) ||
-    null;
+  if (data) {
+    const profile = data as Profile;
+    const shouldSyncNickname = profile.nickname === "독서광" && nickname !== "독서광";
+    const shouldSyncAvatar = !profile.avatar_url && Boolean(avatarUrl);
+    const shouldSyncEmail = !profile.email && Boolean(session.user.email);
+
+    if (shouldSyncNickname || shouldSyncAvatar || shouldSyncEmail) {
+      const { data: synced } = await supabase
+        .from("profiles")
+        .update({
+          ...(shouldSyncNickname ? { nickname } : {}),
+          ...(shouldSyncAvatar ? { avatar_url: avatarUrl } : {}),
+          ...(shouldSyncEmail ? { email: session.user.email ?? "" } : {})
+        })
+        .eq("id", profile.id)
+        .select("*")
+        .maybeSingle();
+
+      if (synced) return synced as Profile;
+      return {
+        ...profile,
+        ...(shouldSyncNickname ? { nickname } : {}),
+        ...(shouldSyncAvatar ? { avatar_url: avatarUrl } : {}),
+        ...(shouldSyncEmail ? { email: session.user.email ?? "" } : {})
+      };
+    }
+
+    return profile;
+  }
 
   const { data: createdProfile } = await supabase
     .from("profiles")
@@ -156,8 +201,24 @@ export async function signUpWithEmail(email: string, password: string, nickname:
   throw new Error("PROFILE_NOT_READY");
 }
 
+async function ensureEmailConfirmed(email: string) {
+  await fetch("/api/ensure-email-confirmed", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email })
+  }).catch(() => undefined);
+}
+
 export async function signInWithEmail(email: string, password: string) {
-  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  let { error } = await supabase.auth.signInWithPassword({ email, password });
+
+  // Older accounts may still be unconfirmed from the early signup flow.
+  if (error) {
+    await ensureEmailConfirmed(email);
+    const retry = await supabase.auth.signInWithPassword({ email, password });
+    error = retry.error;
+  }
+
   if (error) {
     if (/confirm|not confirmed/i.test(error.message)) {
       throw new Error("EMAIL_NOT_CONFIRMED");

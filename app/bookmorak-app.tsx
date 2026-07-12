@@ -159,6 +159,7 @@ export function BookmorakApp() {
   const [postComments, setPostComments] = useState<CommentItem[]>([]);
   const [draftRating, setDraftRating] = useState(0);
   const [draftBody, setDraftBody] = useState("");
+  const [isSubmittingReview, setIsSubmittingReview] = useState(false);
   const [editingReviewId, setEditingReviewId] = useState<string | null>(null);
   const [recentSearchTerms, setRecentSearchTerms] = useState<string[]>(defaultRecentSearches);
   const [sessionEmail, setSessionEmail] = useState("");
@@ -202,6 +203,8 @@ export function BookmorakApp() {
 
         const pendingBooks = readStoredOnboardingBooks();
         if (pendingBooks.length > 0) {
+          // Show followed books in the home feed immediately, then persist in the background.
+          setFollowing((prev) => Array.from(new Set([...prev, ...pendingBooks])));
           for (const bookId of pendingBooks) {
             const targetBook = liveBooksRef.current.find((book) => book.id === bookId);
             if (targetBook) {
@@ -221,14 +224,9 @@ export function BookmorakApp() {
         ]);
 
         if (!isMounted) return;
-        setFollowing(dbFollows);
+        setFollowing((prev) => Array.from(new Set([...prev, ...dbFollows, ...pendingBooks])));
         if (dbReviews.length > 0) {
-          setReviews(
-            dbReviews.map((review) => ({
-              ...review,
-              mine: review.mine || review.user === nextProfile.nickname
-            }))
-          );
+          setReviews((prev) => mergeReviews(prev, dbReviews));
         }
       } catch {
         // The product should still be usable when OAuth succeeds before the profile row is ready.
@@ -285,16 +283,11 @@ export function BookmorakApp() {
         // Keep fixed bestseller order, then overlay DB + Aladin details.
         // Prefer DB user ratings over Aladin placeholders (rating 0).
         setLiveBooks(mergeBooks(fixedBookPreviews, [...firstPageBooks, ...dbBooks]));
-        if (dbFollows.length > 0) setFollowing(dbFollows);
+        if (dbFollows.length > 0) {
+          setFollowing((prev) => Array.from(new Set([...prev, ...dbFollows])));
+        }
         if (dbReviews.length > 0) {
-          setReviews(
-            currentProfile
-              ? dbReviews.map((review) => ({
-                  ...review,
-                  mine: review.mine || review.user === currentProfile.nickname
-                }))
-              : dbReviews
-          );
+          setReviews((prev) => mergeReviews(prev, dbReviews));
         }
 
         // Load remaining bestsellers in the background so the first screen is not blocked.
@@ -335,9 +328,8 @@ export function BookmorakApp() {
   }, [following, reviews]);
 
   const myReviews = useMemo(() => {
-    if (!profile) return reviews.filter((review) => review.mine);
-    return reviews.filter((review) => review.mine || review.user === profile.nickname);
-  }, [profile, reviews]);
+    return reviews.filter((review) => Boolean(review.mine));
+  }, [reviews]);
 
   const sortedBookReviews = useMemo(() => {
     const source = bookDetailReviews.length > 0 ? bookDetailReviews : reviews.filter((review) => review.bookId === activeBook.id);
@@ -448,6 +440,8 @@ export function BookmorakApp() {
   const persistOnboardingFollows = async (nextProfile: Profile, bookIds = selectedBooks) => {
     if (bookIds.length === 0) return;
 
+    setFollowing((prev) => Array.from(new Set([...prev, ...bookIds])));
+
     for (const bookId of bookIds) {
       const targetBook = liveBooksRef.current.find((book) => book.id === bookId);
       if (targetBook) {
@@ -553,6 +547,8 @@ export function BookmorakApp() {
   };
 
   const submitReview = async () => {
+    if (isSubmittingReview) return;
+
     if (draftRating === 0 || draftBody.trim().length < 30) {
       showToast("별점과 30자 이상의 감상을 입력해주세요.");
       return;
@@ -564,6 +560,7 @@ export function BookmorakApp() {
     }
 
     const trimmedBody = draftBody.trim();
+    setIsSubmittingReview(true);
 
     try {
       if (editingReviewId) {
@@ -618,6 +615,8 @@ export function BookmorakApp() {
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
       showToast(message || "서버 저장에 실패했습니다.");
+    } finally {
+      setIsSubmittingReview(false);
     }
   };
 
@@ -642,7 +641,7 @@ export function BookmorakApp() {
         ]);
         setFollowing(dbFollows);
         if (dbReviews.length > 0) {
-          setReviews(dbReviews.map((review) => ({ ...review, mine: review.mine || review.user === loggedInProfile.nickname })));
+          setReviews((prev) => mergeReviews(prev, dbReviews));
         }
       }
       setScreen("home");
@@ -871,6 +870,7 @@ export function BookmorakApp() {
             book={activeBook}
             rating={draftRating}
             body={draftBody}
+            submitting={isSubmittingReview}
             onBack={() => (draftRating || draftBody ? setModal("leaveWrite") : setScreen(editingReviewId ? "post" : writeReturnScreen === "book" ? "book" : "write-pick"))}
             onChangeBook={() => setScreen("write-pick")}
             onRating={setDraftRating}
@@ -1331,8 +1331,8 @@ function WritePickScreen({ books, onBack, onPick }: { books: Book[]; onBack: () 
   );
 }
 
-function WriteScreen({ book, rating, body, onBack, onChangeBook, onRating, onBody, onSubmit, onToast }: { book: Book; rating: number; body: string; onBack: () => void; onChangeBook: () => void; onRating: (rating: number) => void; onBody: (body: string) => void; onSubmit: () => void; onToast: (message: string) => void }) {
-  const canSubmit = rating > 0 && body.trim().length >= 30;
+function WriteScreen({ book, rating, body, submitting = false, onBack, onChangeBook, onRating, onBody, onSubmit, onToast }: { book: Book; rating: number; body: string; submitting?: boolean; onBack: () => void; onChangeBook: () => void; onRating: (rating: number) => void; onBody: (body: string) => void; onSubmit: () => void; onToast: (message: string) => void }) {
+  const canSubmit = rating > 0 && body.trim().length >= 30 && !submitting;
 
   return (
     <section className="scroll-content screen write-screen">
@@ -1365,12 +1365,17 @@ function WriteScreen({ book, rating, body, onBack, onChangeBook, onRating, onBod
           maxLength={1000}
           onChange={(event) => onBody(event.target.value)}
           placeholder="이 책을 읽으며 떠오른 질문, 감상, 남기고 싶은 문장을 자유롭게 적어보세요"
+          disabled={submitting}
         />
         <span>{body.length}/1000</span>
       </label>
       <p className="hint">최소 30자 이상, 최대 1000자까지 입력할 수 있습니다. (띄어쓰기 포함)</p>
-      <button className={canSubmit ? "primary-button submit" : "primary-button submit disabled"} onClick={onSubmit}>
-        등록하기
+      <button
+        className={canSubmit ? "primary-button submit" : "primary-button submit disabled"}
+        onClick={onSubmit}
+        disabled={!canSubmit}
+      >
+        {submitting ? "등록 중..." : "등록하기"}
       </button>
     </section>
   );
