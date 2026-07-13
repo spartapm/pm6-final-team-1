@@ -455,22 +455,75 @@ export async function listBooks() {
     .from("books")
     .select("*, book_follows(user_id), reviews(rating)")
     .order("created_at", { ascending: false })
-    .limit(48);
+    .limit(200);
 
   if (error) throw error;
   return ((data ?? []) as BookRow[]).map(mapBookRow);
 }
 
+export async function listBookEngagement(bookIds: string[]) {
+  const uniqueIds = Array.from(new Set(bookIds.filter(Boolean)));
+  if (uniqueIds.length === 0) return [] as Array<{ id: string; rating: number; followers: number }>;
+
+  const chunks: string[][] = [];
+  for (let index = 0; index < uniqueIds.length; index += 80) {
+    chunks.push(uniqueIds.slice(index, index + 80));
+  }
+
+  const rows: BookRow[] = [];
+  for (const chunk of chunks) {
+    const { data, error } = await supabase
+      .from("books")
+      .select("id, book_follows(user_id), reviews(rating)")
+      .in("id", chunk);
+    if (error) throw error;
+    rows.push(...((data ?? []) as BookRow[]));
+  }
+
+  return rows.map((row) => {
+    const ratings = row.reviews ?? [];
+    const average =
+      ratings.length > 0 ? Math.round((ratings.reduce((sum, review) => sum + review.rating, 0) / ratings.length) * 10) / 10 : 0;
+    return {
+      id: row.id,
+      rating: average,
+      followers: row.book_follows?.length ?? 0
+    };
+  });
+}
+
+export async function getBookFollowerCount(bookId: string) {
+  const { count, error } = await supabase
+    .from("book_follows")
+    .select("*", { count: "exact", head: true })
+    .eq("book_id", bookId);
+  if (error) throw error;
+  return count ?? 0;
+}
+
 export async function listFeedReviews(bookIds: string[] = [], currentProfileId?: string) {
-  let query = reviewSelect().eq("is_draft", false).order("created_at", { ascending: false }).limit(40);
+  let query = reviewSelect().eq("is_draft", false).order("created_at", { ascending: false });
 
   if (bookIds.length > 0) {
-    query = query.in("book_id", bookIds);
+    query = query.in("book_id", bookIds).limit(120);
+  } else {
+    query = query.limit(40);
   }
 
   const { data, error } = await query;
   if (error) throw error;
   return ((data ?? []) as unknown as ReviewRow[]).map((row) => mapReviewRow(row, currentProfileId));
+}
+
+export async function listMyReviews(profileId: string, currentProfileId?: string) {
+  const { data, error } = await reviewSelect()
+    .eq("user_id", profileId)
+    .eq("is_draft", false)
+    .order("created_at", { ascending: false })
+    .limit(100);
+
+  if (error) throw error;
+  return ((data ?? []) as unknown as ReviewRow[]).map((row) => mapReviewRow(row, currentProfileId ?? profileId));
 }
 
 export async function listBookReviews(bookId: string, sortBy: "latest" | "popular" = "latest", currentProfileId?: string) {
