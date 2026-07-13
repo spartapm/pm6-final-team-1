@@ -514,6 +514,15 @@ svg {
   color: var(--primary);
 }
 
+.write-pick-screen .lead {
+  margin-bottom: 14px;
+}
+
+.write-pick-search {
+  margin-bottom: 16px;
+  border-radius: 999px;
+}
+
 .search-box input {
   width: 100%;
   border: 0;

@@ -1310,22 +1310,46 @@ function BookDetailScreen({ book, reviews, following, likedPosts, sortBy, onBack
 }
 
 function WritePickScreen({ books, onBack, onPick }: { books: Book[]; onBack: () => void; onPick: (bookId: string) => void }) {
+  const [query, setQuery] = useState("");
+  const filteredBooks = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    if (!normalized) return books;
+    return books.filter((book) => `${book.title} ${book.author}`.toLowerCase().includes(normalized));
+  }, [books, query]);
+
   return (
-    <section className="scroll-content screen">
+    <section className="scroll-content screen write-pick-screen">
       <Header title="책 선택" onBack={onBack} />
       <p className="lead">감상을 남길 책을 선택해주세요.</p>
-      <div className="book-list onboarding-book-list">
-        {books.map((book) => (
-          <button key={book.id} className="book-row" onClick={() => onPick(book.id)}>
-            <BookCover book={book} />
-            <span>
-              <strong>{book.title}</strong>
-              <small>{book.author}</small>
-              <em>{book.genres.join(" · ")}</em>
-            </span>
-            <b>선택</b>
+      <label className="search-box write-pick-search">
+        <IconAsset src={searchFieldIcon} alt="" size={20} />
+        <input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="검색어를 입력해 주세요."
+        />
+        {query && (
+          <button type="button" onClick={() => setQuery("")} aria-label="검색어 삭제">
+            <IconAsset src={deleteIcon} alt="" size={18} />
           </button>
-        ))}
+        )}
+      </label>
+      <div className="book-list onboarding-book-list">
+        {filteredBooks.length === 0 ? (
+          <EmptyState title="검색 결과가 없어요." body="다른 책 제목이나 작가명으로 다시 검색해보세요." />
+        ) : (
+          filteredBooks.map((book) => (
+            <button key={book.id} className="book-row" onClick={() => onPick(book.id)}>
+              <BookCover book={book} />
+              <span>
+                <strong>{book.title}</strong>
+                <small>{book.author}</small>
+                <em>{book.genres.join(" · ")}</em>
+              </span>
+              <b>선택</b>
+            </button>
+          ))
+        )}
       </div>
     </section>
   );
