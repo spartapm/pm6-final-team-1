@@ -1495,13 +1495,34 @@ function ReviewCard({ review, book, liked = false, compact = false, variant, onB
 }
 
 function OnboardingScreen({ bookCatalog, selectedBooks, selectedGenre, onBack, onGenre, onToggleBook, onNext }: { bookCatalog: Book[]; selectedBooks: string[]; selectedGenre: string; onBack: () => void; onGenre: (genre: string) => void; onToggleBook: (bookId: string) => void; onNext: () => void }) {
-  const visibleBooks = bookCatalog.filter((book) => selectedGenre === "전체" || book.genres.includes(selectedGenre));
+  const [query, setQuery] = useState("");
+  const visibleBooks = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    return bookCatalog.filter((book) => {
+      const genreMatches = selectedGenre === "전체" || book.genres.includes(selectedGenre);
+      const queryMatches = !normalized || `${book.title} ${book.author}`.toLowerCase().includes(normalized);
+      return genreMatches && queryMatches;
+    });
+  }, [bookCatalog, query, selectedGenre]);
 
   return (
-    <section className="scroll-content screen">
+    <section className="scroll-content screen onboarding-screen">
       <Header title="관심 도서 선택" onBack={onBack} />
       <div className="progress"><span style={{ width: "50%" }} /></div>
       <p className="lead">관심 있는 책을 2권 이상 선택하면 취향에 맞는 피드를 먼저 볼 수 있어요.</p>
+      <label className="search-box write-pick-search">
+        <IconAsset src={searchFieldIcon} alt="" size={20} />
+        <input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="검색어를 입력해 주세요."
+        />
+        {query && (
+          <button type="button" onClick={() => setQuery("")} aria-label="검색어 삭제">
+            <IconAsset src={deleteIcon} alt="" size={18} />
+          </button>
+        )}
+      </label>
       <div className="chips genre-chips">
         {genres.map((genre) => (
           <button key={genre} className={selectedGenre === genre ? "chip selected" : "chip"} onClick={() => onGenre(genre)}>
@@ -1510,17 +1531,21 @@ function OnboardingScreen({ bookCatalog, selectedBooks, selectedGenre, onBack, o
         ))}
       </div>
       <div className="book-list onboarding-book-list">
-        {visibleBooks.map((book) => (
-          <button key={book.id} className={selectedBooks.includes(book.id) ? "book-row picked" : "book-row"} onClick={() => onToggleBook(book.id)}>
-            <BookCover book={book} />
-            <span>
-              <strong>{book.title}</strong>
-              <small>{book.author}</small>
-              <em>{book.genres.join(" · ")}</em>
-            </span>
-            <b>{selectedBooks.includes(book.id) ? "선택됨" : "선택"}</b>
-          </button>
-        ))}
+        {visibleBooks.length === 0 ? (
+          <EmptyState title="검색 결과가 없어요." body="다른 책 제목이나 작가명으로 다시 검색해보세요." />
+        ) : (
+          visibleBooks.map((book) => (
+            <button key={book.id} className={selectedBooks.includes(book.id) ? "book-row picked" : "book-row"} onClick={() => onToggleBook(book.id)}>
+              <BookCover book={book} />
+              <span>
+                <strong>{book.title}</strong>
+                <small>{book.author}</small>
+                <em>{book.genres.join(" · ")}</em>
+              </span>
+              <b>{selectedBooks.includes(book.id) ? "선택됨" : "선택"}</b>
+            </button>
+          ))
+        )}
       </div>
       <div className="sticky-cta">
         <p>선택한 책 {selectedBooks.length}권</p>

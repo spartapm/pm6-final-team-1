@@ -523,6 +523,14 @@ svg {
   border-radius: 999px;
 }
 
+.onboarding-screen .lead {
+  margin-bottom: 14px;
+}
+
+.onboarding-screen .write-pick-search {
+  margin-bottom: 14px;
+}
+
 .search-box input {
   width: 100%;
   border: 0;
