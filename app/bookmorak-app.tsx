@@ -40,6 +40,16 @@ import { genres, type Book, type Review } from "./data";
 import { supabase, supabaseUrl } from "@/lib/supabase";
 import { BESTSELLER_ISBN13, BESTSELLER_PREVIEW } from "@/lib/bestseller-isbn13";
 import {
+  mapBookDetailSource,
+  mapFollowScreen,
+  mapLikeCommentScreen,
+  mapPostClickSource,
+  setAuthIntent,
+  consumeAuthIntent,
+  trackEvent,
+  trackHomePostView
+} from "@/lib/gtm";
+import {
   createComment,
   createReview,
   deleteCurrentAccount,
@@ -244,6 +254,7 @@ export function BookmorakApp() {
             } else {
               await toggleBookFollow(nextProfile.id, bookId, true).catch(() => undefined);
             }
+            trackEvent("follow_book", { book_id: bookId, screen: "onboarding" });
           }
           clearStoredOnboardingBooks();
           setSelectedBooks([]);
@@ -259,6 +270,13 @@ export function BookmorakApp() {
           setReviews((prev) => mergeReviews(prev, nextReviews));
         }
         await applyBookEngagement(Array.from(new Set([...followIds, ...liveBooksRef.current.map((book) => book.id)])));
+
+        const authIntent = consumeAuthIntent();
+        if (authIntent === "sign_up") {
+          trackEvent("sign_up_complete", { user_status: "member" });
+        } else if (authIntent === "login") {
+          trackEvent("login_complete", { user_status: "member" });
+        }
       } catch {
         // The product should still be usable when OAuth succeeds before the profile row is ready.
       }
@@ -409,7 +427,12 @@ export function BookmorakApp() {
     window.setTimeout(() => setToast(""), 1800);
   };
 
-  const openBook = async (bookId: string, returnScreen: Screen = screen) => {
+  const openBook = async (bookId: string, returnScreen: Screen = screen, postId = "") => {
+    trackEvent("book_detail_view", {
+      post_id: postId || undefined,
+      book_id: bookId,
+      source: mapBookDetailSource(returnScreen)
+    });
     setBookReturnScreen(returnScreen);
     setActiveBookId(bookId);
     setBookDetailReviews([]);
@@ -459,6 +482,12 @@ export function BookmorakApp() {
   };
 
   const openPost = async (postId: string, returnScreen: Screen = screen) => {
+    const target = reviews.find((review) => review.id === postId);
+    trackEvent("post_click", {
+      post_id: postId,
+      book_id: target?.bookId || activeBook.id,
+      source: mapPostClickSource(returnScreen)
+    });
     setPostReturnScreen(returnScreen);
     setActivePostId(postId);
     setScreen("post");
@@ -473,6 +502,7 @@ export function BookmorakApp() {
   };
 
   const openWritePicker = (returnScreen: Screen = screen) => {
+    trackEvent("write_post_start");
     setWriteReturnScreen(returnScreen);
     setEditingReviewId(null);
     setDraftRating(0);
@@ -481,6 +511,7 @@ export function BookmorakApp() {
   };
 
   const openWriteForBook = (bookId: string, returnScreen: Screen = screen) => {
+    trackEvent("write_post_start");
     setWriteReturnScreen(returnScreen);
     setActiveBookId(bookId);
     setEditingReviewId(null);
@@ -502,13 +533,14 @@ export function BookmorakApp() {
       } else {
         await toggleBookFollow(nextProfile.id, bookId, true);
       }
+      trackEvent("follow_book", { book_id: bookId, screen: "onboarding" });
     }
 
     setFollowing((prev) => Array.from(new Set([...prev, ...bookIds])));
     clearStoredOnboardingBooks();
   };
 
-  const toggleFollow = async (bookId: string) => {
+  const toggleFollow = async (bookId: string, followScreen: Screen | "onboarding" = screen) => {
     if (!profile) {
       showToast("로그인 후 팔로우할 수 있습니다.");
       return;
@@ -535,6 +567,10 @@ export function BookmorakApp() {
       if (typeof latestCount === "number") {
         setLiveBooks((prev) => prev.map((book) => (book.id === bookId ? { ...book, followers: latestCount } : book)));
       }
+      trackEvent(shouldFollow ? "follow_book" : "unfollow_book", {
+        book_id: bookId,
+        screen: mapFollowScreen(followScreen)
+      });
     } catch (error) {
       setFollowing((prev) => (shouldFollow ? prev.filter((id) => id !== bookId) : [...prev, bookId]));
       setLiveBooks((prev) =>
@@ -549,7 +585,7 @@ export function BookmorakApp() {
     }
   };
 
-  const toggleLike = async (postId: string) => {
+  const toggleLike = async (postId: string, likeScreen: Screen = screen) => {
     const shouldLike = !likedPosts.includes(postId);
     setLikedPosts((prev) => (prev.includes(postId) ? prev.filter((id) => id !== postId) : [...prev, postId]));
 
@@ -559,6 +595,12 @@ export function BookmorakApp() {
 
     try {
       await toggleReviewLike(profile.id, postId, shouldLike);
+      if (shouldLike) {
+        trackEvent("like_post", {
+          post_id: postId,
+          screen: mapLikeCommentScreen(likeScreen)
+        });
+      }
     } catch {
       setLikedPosts((prev) => (shouldLike ? prev.filter((id) => id !== postId) : [...prev, postId]));
       showToast("좋아요 처리에 실패했습니다.");
@@ -639,6 +681,7 @@ export function BookmorakApp() {
       }
 
       const createdId = await createReview(profile.id, activeBook.id, draftRating, trimmedBody, false, activeBook);
+      trackEvent("write_post_complete");
 
       const nextReview: Review = {
         id: createdId,
@@ -702,6 +745,7 @@ export function BookmorakApp() {
       }
       setScreen("home");
       showToast("로그인 되었습니다.");
+      trackEvent("login_complete", { user_status: "member" });
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
       if (message === "EMAIL_NOT_CONFIRMED") {
@@ -740,6 +784,7 @@ export function BookmorakApp() {
       }
       setScreen("home");
       showToast("계정이 생성되었습니다.");
+      trackEvent("sign_up_complete", { user_status: "member" });
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
       if (message === "ALREADY_REGISTERED" || /already|registered|exists/i.test(message)) {
@@ -772,6 +817,10 @@ export function BookmorakApp() {
       setReviews((prev) =>
         prev.map((review) => (review.id === activePost.id ? { ...review, comments: review.comments + 1 } : review))
       );
+      trackEvent("comment_post", {
+        post_id: activePost.id,
+        screen: mapLikeCommentScreen("post")
+      });
       showToast(parentId ? "답글이 등록되었습니다." : "댓글이 등록되었습니다.");
     } catch {
       showToast("댓글 등록에 실패했습니다.");
@@ -821,7 +870,15 @@ export function BookmorakApp() {
   return (
     <main className="shell">
       <div className="phone">
-        {screen === "start" && <StartScreen onStart={() => setScreen("onboarding")} onLogin={() => setScreen("login")} />}
+        {screen === "start" && (
+          <StartScreen
+            onStart={() => {
+              trackEvent("onboarding_start");
+              setScreen("onboarding");
+            }}
+            onLogin={() => setScreen("login")}
+          />
+        )}
         {screen === "onboarding" && (
           <OnboardingScreen
             bookCatalog={liveBooks}
@@ -845,11 +902,15 @@ export function BookmorakApp() {
             selectedBooks={selectedBooks}
             onBack={() => setScreen("onboarding")}
             onAdd={() => setScreen("onboarding")}
-            onSignup={() => setScreen("signup")}
+            onSignup={() => {
+              trackEvent("onboarding_complete");
+              setScreen("signup");
+            }}
           />
         )}
         {screen === "login" && <LoginScreen onBack={() => setScreen("start")} onLogin={handleLogin} onKakaoLogin={async () => {
           try {
+            setAuthIntent("login");
             await signInWithKakao();
           } catch {
             showToast("카카오 로그인 설정을 확인해주세요.");
@@ -857,6 +918,7 @@ export function BookmorakApp() {
         }} onSignup={() => setScreen("signup")} onToast={showToast} />}
         {screen === "signup" && <SignupScreen onBack={() => setScreen("preview")} onKakaoLogin={async () => {
           try {
+            setAuthIntent("sign_up");
             await signInWithKakao();
           } catch {
             showToast("카카오 로그인 설정을 확인해주세요.");
@@ -868,9 +930,9 @@ export function BookmorakApp() {
               reviews={feedReviews}
               bookCatalog={liveBooks}
               likedPosts={likedPosts}
-              onBook={(bookId) => openBook(bookId, "home")}
+              onBook={(bookId, postId) => openBook(bookId, "home", postId)}
               onPost={(postId) => openPost(postId, "home")}
-              onLike={toggleLike}
+              onLike={(postId) => toggleLike(postId, "home")}
               onMore={openMore}
               onToast={showToast}
               onNotifications={() => setScreen("notifications")}
@@ -903,7 +965,7 @@ export function BookmorakApp() {
               onRemoveRecent={(term) => setRecentSearchTerms((prev) => prev.filter((item) => item !== term))}
               onGenre={setSelectedGenre}
               onBook={(bookId) => openBook(bookId, "search")}
-              onFollow={toggleFollow}
+              onFollow={(bookId) => toggleFollow(bookId, "search")}
             />
           </AppFrame>
         )}
@@ -915,10 +977,10 @@ export function BookmorakApp() {
             likedPosts={likedPosts}
             sortBy={sortBy}
             onBack={() => setScreen(bookReturnScreen)}
-            onFollow={() => toggleFollow(activeBook.id)}
+            onFollow={() => toggleFollow(activeBook.id, "book")}
             onWrite={() => openWriteForBook(activeBook.id, "book")}
             onPost={(postId) => openPost(postId, "book")}
-            onLike={toggleLike}
+            onLike={(postId) => toggleLike(postId, "book")}
             onMore={openMore}
             onSort={() => setModal("sort")}
             onToast={showToast}
@@ -955,7 +1017,7 @@ export function BookmorakApp() {
               onSettings={() => setScreen("settings")}
               onProfile={() => setScreen("profile")}
               onFollowing={() => setScreen("following")}
-              onBook={(bookId) => openBook(bookId, "mypage")}
+              onBook={(bookId, postId) => openBook(bookId, "mypage", postId)}
               onPost={(postId) => openPost(postId, "mypage")}
               onMore={openMore}
               onToast={showToast}
@@ -968,7 +1030,7 @@ export function BookmorakApp() {
             bookCatalog={liveBooks}
             onBack={() => setScreen("mypage")}
             onBook={(bookId) => openBook(bookId, "following")}
-            onFollow={toggleFollow}
+            onFollow={(bookId) => toggleFollow(bookId, "following")}
           />
         )}
         {screen === "settings" && <SettingsScreen onBack={() => setScreen("mypage")} onTerms={() => { setPolicyReturn("settings"); setScreen("terms"); }} onPrivacy={() => { setPolicyReturn("settings"); setScreen("privacy"); }} onLogout={() => setModal("logout")} onDeleteAccount={() => setModal("deleteAccount")} onToast={showToast} />}
@@ -996,8 +1058,8 @@ export function BookmorakApp() {
             comments={postComments}
             likedComments={likedComments}
             onBack={() => setScreen(postReturnScreen)}
-            onBook={(bookId) => openBook(bookId, "post")}
-            onLike={() => toggleLike(activePost.id)}
+            onBook={(bookId) => openBook(bookId, "post", activePost.id)}
+            onLike={() => toggleLike(activePost.id, "post")}
             onMore={() => openMore(activePost.id)}
             onSubmitComment={submitComment}
             onToggleCommentLike={toggleCommentHeart}
@@ -1153,7 +1215,7 @@ function IconAsset({ src, alt, size, className }: { src: IconSource; alt: string
   return <Image className={className ? `icon-asset ${className}` : "icon-asset"} src={src} alt={alt} width={size} height={size} unoptimized />;
 }
 
-function HomeScreen({ reviews, bookCatalog, likedPosts, onBook, onPost, onLike, onMore, onToast, onNotifications }: { reviews: Review[]; bookCatalog: Book[]; likedPosts: string[]; onBook: (bookId: string) => void; onPost: (postId: string) => void; onLike: (postId: string) => void; onMore: (postId: string) => void; onToast: (message: string) => void; onNotifications: () => void }) {
+function HomeScreen({ reviews, bookCatalog, likedPosts, onBook, onPost, onLike, onMore, onToast, onNotifications }: { reviews: Review[]; bookCatalog: Book[]; likedPosts: string[]; onBook: (bookId: string, postId: string) => void; onPost: (postId: string) => void; onLike: (postId: string) => void; onMore: (postId: string) => void; onToast: (message: string) => void; onNotifications: () => void }) {
   return (
     <section className="screen">
       <div className="home-top">
@@ -1165,13 +1227,14 @@ function HomeScreen({ reviews, bookCatalog, likedPosts, onBook, onPost, onLike, 
       {reviews.length === 0 ? (
         <EmptyState title="아직 게시글이 없어요." body="팔로우한 책의 감상글이 생기면 이곳에 보여드릴게요." />
       ) : (
-        reviews.map((review) => (
+        reviews.map((review, index) => (
           <ReviewCard
             key={review.id}
             review={review}
             book={bookCatalog.find((book) => book.id === review.bookId) ?? bookCatalog[0] ?? fixedBookPreviews[0]}
             liked={likedPosts.includes(review.id)}
-            onBook={() => onBook(review.bookId)}
+            trackHomeViewIndex={index}
+            onBook={() => onBook(review.bookId, review.id)}
             onPost={() => onPost(review.id)}
             onLike={() => onLike(review.id)}
             onMore={() => onMore(review.id)}
@@ -1485,7 +1548,7 @@ function WriteScreen({ book, rating, body, submitting = false, onBack, onChangeB
   );
 }
 
-function MyPageScreen({ reviews, profile, bookCatalog, followingCount, onSettings, onProfile, onFollowing, onBook, onPost, onMore, onToast }: { reviews: Review[]; profile: Profile | null; bookCatalog: Book[]; followingCount: number; onSettings: () => void; onProfile: () => void; onFollowing: () => void; onBook: (bookId: string) => void; onPost: (postId: string) => void; onMore: (postId: string) => void; onToast: (message: string) => void }) {
+function MyPageScreen({ reviews, profile, bookCatalog, followingCount, onSettings, onProfile, onFollowing, onBook, onPost, onMore, onToast }: { reviews: Review[]; profile: Profile | null; bookCatalog: Book[]; followingCount: number; onSettings: () => void; onProfile: () => void; onFollowing: () => void; onBook: (bookId: string, postId: string) => void; onPost: (postId: string) => void; onMore: (postId: string) => void; onToast: (message: string) => void }) {
   return (
     <section className="screen mypage-screen">
       <Header title="마이페이지" right={<button className="settings-button" onClick={onSettings}><IconAsset src={settingsIcon} alt="설정" size={24} /></button>} />
@@ -1524,7 +1587,7 @@ function MyPageScreen({ reviews, profile, bookCatalog, followingCount, onSetting
             key={review.id}
             review={review}
             book={bookCatalog.find((book) => book.id === review.bookId) ?? bookCatalog[0] ?? fixedBookPreviews[0]}
-            onBook={() => onBook(review.bookId)}
+            onBook={() => onBook(review.bookId, review.id)}
             onPost={() => onPost(review.id)}
             onLike={() => onToast("내 게시글에도 좋아요를 남겼어요.")}
             onMore={() => onMore(review.id)}
@@ -1537,9 +1600,58 @@ function MyPageScreen({ reviews, profile, bookCatalog, followingCount, onSetting
   );
 }
 
-function ReviewCard({ review, book, liked = false, compact = false, variant, onBook, onPost, onLike, onMore, onToast }: { review: Review; book: Book; liked?: boolean; compact?: boolean; variant?: "mypage"; onBook: () => void; onPost: () => void; onLike: () => void; onMore?: () => void; onToast: (message: string) => void }) {
+function ReviewCard({
+  review,
+  book,
+  liked = false,
+  compact = false,
+  variant,
+  trackHomeViewIndex,
+  onBook,
+  onPost,
+  onLike,
+  onMore,
+  onToast
+}: {
+  review: Review;
+  book: Book;
+  liked?: boolean;
+  compact?: boolean;
+  variant?: "mypage";
+  trackHomeViewIndex?: number;
+  onBook: () => void;
+  onPost: () => void;
+  onLike: () => void;
+  onMore?: () => void;
+  onToast: (message: string) => void;
+}) {
+  const cardRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (trackHomeViewIndex === undefined || !cardRef.current) return;
+
+    const node = cardRef.current;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting && entry.intersectionRatio >= 0.5) {
+            trackHomePostView(review.id, trackHomeViewIndex);
+            observer.unobserve(node);
+          }
+        });
+      },
+      { threshold: 0.5 }
+    );
+
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [review.id, trackHomeViewIndex]);
+
   return (
-    <article className={[compact ? "review-card compact-card" : "review-card", variant === "mypage" ? "mypage-review-card" : ""].filter(Boolean).join(" ")}>
+    <article
+      ref={cardRef}
+      className={[compact ? "review-card compact-card" : "review-card", variant === "mypage" ? "mypage-review-card" : ""].filter(Boolean).join(" ")}
+    >
       {!compact && (
         <button className="book-strip" onClick={onBook}>
           <BookCover book={book} />
