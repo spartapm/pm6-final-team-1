@@ -190,6 +190,7 @@ export function BookmorakApp() {
   const [bookReturnScreen, setBookReturnScreen] = useState<Screen>("home");
   const [writeReturnScreen, setWriteReturnScreen] = useState<Screen>("home");
   const [postReturnScreen, setPostReturnScreen] = useState<Screen>("home");
+  const [followingReturnScreen, setFollowingReturnScreen] = useState<Screen>("mypage");
   const [profile, setProfile] = useState<Profile | null>(null);
   const isSyncing = false;
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1051,7 +1052,10 @@ export function BookmorakApp() {
               onMore={openMore}
               onToast={showToast}
               onNotifications={() => setScreen("notifications")}
-              onFollowing={() => setScreen("following")}
+              onFollowing={() => {
+                setFollowingReturnScreen("home");
+                setScreen("following");
+              }}
             />
           </AppFrame>
         )}
@@ -1134,7 +1138,10 @@ export function BookmorakApp() {
               followingCount={following.length}
               onSettings={() => setScreen("settings")}
               onProfile={() => setScreen("profile")}
-              onFollowing={() => setScreen("following")}
+              onFollowing={() => {
+                setFollowingReturnScreen("mypage");
+                setScreen("following");
+              }}
               onBook={(bookId, postId) => openBook(bookId, "mypage", postId)}
               onPost={(postId) => openPost(postId, "mypage")}
               onMore={openMore}
@@ -1146,7 +1153,7 @@ export function BookmorakApp() {
           <FollowingScreen
             following={following}
             bookCatalog={liveBooks}
-            onBack={() => setScreen("mypage")}
+            onBack={() => setScreen(followingReturnScreen)}
             onBook={(bookId) => openBook(bookId, "following")}
             onFollow={(bookId) => toggleFollow(bookId, "following")}
           />
@@ -1409,7 +1416,7 @@ function HomeScreen({
             ) : (
               followedBooks.map((book) => (
                 <span key={book.id} className="home-book-spine" style={{ background: spineColor(book.id) }} title={book.title}>
-                  <em>{book.title}</em>
+                  <em>{book.title.slice(0, 4).trimEnd()}</em>
                 </span>
               ))
             )}
