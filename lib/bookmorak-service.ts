@@ -1,7 +1,7 @@
 import { supabase } from "./supabase";
 import type { Book, Review } from "@/app/data";
 import { aladinCacheKey, readAladinCache, writeAladinCache } from "./aladin-cache";
-import { EXTRA_BOOK_GENRES } from "./bestseller-isbn13";
+import { CATALOG_REVISION, EXTRA_BOOK_GENRES } from "./bestseller-isbn13";
 
 export type Profile = {
   id: string;
@@ -328,6 +328,7 @@ export async function listFeaturedBookIsbn13() {
 export async function fetchFixedBestsellerBooks(limit = 24, isbn13List: string[] = [], offset = 0) {
   const cacheKey = aladinCacheKey([
     "fixed-bestsellers",
+    CATALOG_REVISION,
     offset,
     limit,
     isbn13List.length > 0 && isbn13List.length <= 24 ? isbn13List.join(",") : "default"

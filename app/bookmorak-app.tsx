@@ -39,7 +39,8 @@ import defaultAvatarIcon from "../team-1-icons/기본 프로필.svg";
 import bookshelfIcon from "../team-1-icons/홈화면-책장.png";
 import { genres, type Book, type Review } from "./data";
 import { supabase, supabaseUrl } from "@/lib/supabase";
-import { BESTSELLER_ISBN13, BESTSELLER_PREVIEW } from "@/lib/bestseller-isbn13";
+import { BESTSELLER_ISBN13, BESTSELLER_PREVIEW, CATALOG_REVISION, EXTRA_BOOK_SEED } from "@/lib/bestseller-isbn13";
+import { ensureCatalogCacheRevision } from "@/lib/aladin-cache";
 import {
   mapBookDetailSource,
   mapFollowScreen,
@@ -149,7 +150,7 @@ function clearStoredOnboardingBooks() {
   }
 }
 
-const fixedBookPreviews: Book[] = BESTSELLER_PREVIEW.map((book) => ({
+const fixedBookPreviews: Book[] = [...BESTSELLER_PREVIEW, ...EXTRA_BOOK_SEED].map((book) => ({
   id: book.isbn13,
   title: book.title,
   author: book.author,
@@ -203,6 +204,7 @@ export function BookmorakApp() {
 
   useEffect(() => {
     let isMounted = true;
+    ensureCatalogCacheRevision(CATALOG_REVISION);
 
     async function loadFollowedContent(profileId: string, followIds: string[]) {
       const [feedReviewsData, myReviewsData] = await Promise.all([
