@@ -53,6 +53,7 @@ import {
 import {
   createComment,
   createReview,
+  deleteComment,
   deleteCurrentAccount,
   deleteReview,
   fetchAladinBookDetail,
@@ -67,6 +68,7 @@ import {
   listFeedReviews,
   listFollowingBookIds,
   listMyReviews,
+  reportComment,
   reportReview,
   signInWithEmail,
   signInWithKakao,
@@ -75,6 +77,7 @@ import {
   toggleBookFollow,
   toggleCommentLike,
   toggleReviewLike,
+  updateComment,
   updateProfile as updateSupabaseProfile,
   updateReview,
   uploadProfileImage,
@@ -103,7 +106,7 @@ type Screen =
   | "profile"
   | "password"
   | "post";
-type ModalType = "more" | "report" | "deletePost" | "leaveWrite" | "logout" | "deleteAccount" | "profilePhoto" | "sort" | null;
+type ModalType = "more" | "report" | "deletePost" | "deleteComment" | "leaveWrite" | "logout" | "deleteAccount" | "profilePhoto" | "sort" | null;
 type IconSource = StaticImageData | string;
 
 const currentUser = {
@@ -180,6 +183,8 @@ export function BookmorakApp() {
   const [toast, setToast] = useState("");
   const [modal, setModal] = useState<ModalType>(null);
   const [reportReason, setReportReason] = useState("스팸/홍보성");
+  const [reportTarget, setReportTarget] = useState<"post" | "comment">("post");
+  const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<"latest" | "popular">("latest");
   const [policyReturn, setPolicyReturn] = useState<Screen>("settings");
   const [bookReturnScreen, setBookReturnScreen] = useState<Screen>("home");
@@ -228,8 +233,6 @@ export function BookmorakApp() {
     async function enterAuthenticatedApp() {
       if (!isMounted) return;
 
-      setScreen("home");
-
       try {
         const {
           data: { session }
@@ -237,6 +240,36 @@ export function BookmorakApp() {
         if (session?.user?.email) {
           setSessionEmail(session.user.email);
         }
+
+        const authIntent = consumeAuthIntent();
+        if (authIntent === "login") {
+          const authUser = session?.user;
+          const createdAtMs = authUser?.created_at ? new Date(authUser.created_at).getTime() : 0;
+          const isBrandNewAccount = createdAtMs > 0 && Date.now() - createdAtMs < 3 * 60 * 1000;
+          const isRegistered = Boolean(authUser?.user_metadata?.bookmorak_registered);
+
+          if (isBrandNewAccount && !isRegistered) {
+            if (session?.access_token) {
+              await fetch("/api/delete-account", {
+                method: "POST",
+                headers: { Authorization: `Bearer ${session.access_token}` }
+              }).catch(() => undefined);
+            }
+            await signOut().catch(() => undefined);
+            if (!isMounted) return;
+            setProfile(null);
+            setFollowing([]);
+            setScreen("start");
+            showToast("가입되지 않은 계정입니다. 먼저 회원가입을 진행해주세요.");
+            return;
+          }
+        }
+
+        if (authIntent === "sign_up") {
+          await supabase.auth.updateUser({ data: { bookmorak_registered: true } }).catch(() => undefined);
+        }
+
+        setScreen("home");
 
         const nextProfile = await getCurrentProfile();
         if (!isMounted || !nextProfile) return;
@@ -272,7 +305,6 @@ export function BookmorakApp() {
         }
         await applyBookEngagement(Array.from(new Set([...followIds, ...liveBooksRef.current.map((book) => book.id)])));
 
-        const authIntent = consumeAuthIntent();
         if (authIntent === "sign_up") {
           trackEvent("sign_up_complete", { user_status: "member" });
         } else if (authIntent === "login") {
@@ -495,7 +527,7 @@ export function BookmorakApp() {
     setPostComments([]);
 
     try {
-      const comments = await listComments(postId);
+      const comments = await listComments(postId, profile?.id);
       setPostComments(comments);
     } catch {
       setPostComments([]);
@@ -631,17 +663,91 @@ export function BookmorakApp() {
 
   const submitReport = async () => {
     setModal(null);
+    const targetCommentId = activeCommentId;
+    setActiveCommentId(null);
 
-    if (!profile || activePost.id.startsWith("r")) {
+    if (!profile) {
       showToast(`신고가 완료되었습니다. (${reportReason})`);
       return;
     }
 
     try {
-      await reportReview(profile.id, activePost.id, reportReason);
+      if (reportTarget === "comment") {
+        if (!targetCommentId || targetCommentId.startsWith("c")) {
+          showToast("신고가 완료되었습니다.");
+          return;
+        }
+        await reportComment(profile.id, targetCommentId, reportReason);
+      } else {
+        if (activePost.id.startsWith("r")) {
+          showToast("신고가 완료되었습니다.");
+          return;
+        }
+        await reportReview(profile.id, activePost.id, reportReason);
+      }
       showToast("신고가 완료되었습니다.");
     } catch {
       showToast("이미 신고했거나 신고 처리에 실패했습니다.");
+    }
+  };
+
+  const editCommentBody = async (commentId: string, body: string) => {
+    const trimmed = body.trim();
+    if (!trimmed) {
+      showToast("댓글 내용을 입력해주세요.");
+      return;
+    }
+
+    const previous = postComments;
+    setPostComments((prev) => prev.map((comment) => (comment.id === commentId ? { ...comment, body: trimmed } : comment)));
+
+    if (commentId.startsWith("c")) {
+      showToast("댓글이 수정되었습니다.");
+      return;
+    }
+
+    try {
+      await updateComment(commentId, trimmed);
+      showToast("댓글이 수정되었습니다.");
+    } catch {
+      setPostComments(previous);
+      showToast("댓글 수정에 실패했습니다.");
+    }
+  };
+
+  const deleteActiveComment = async () => {
+    const commentId = activeCommentId;
+    setModal(null);
+    setActiveCommentId(null);
+    if (!commentId) return;
+
+    const previous = postComments;
+    const removed = previous.find((comment) => comment.id === commentId);
+    setPostComments((prev) => prev.filter((comment) => comment.id !== commentId && comment.parentId !== commentId));
+    if (activePost?.id) {
+      setReviews((prev) =>
+        prev.map((review) =>
+          review.id === activePost.id ? { ...review, comments: Math.max(0, review.comments - 1) } : review
+        )
+      );
+    }
+
+    if (commentId.startsWith("c")) {
+      showToast("댓글이 삭제되었습니다.");
+      return;
+    }
+
+    try {
+      await deleteComment(commentId);
+      showToast("댓글이 삭제되었습니다.");
+    } catch {
+      setPostComments(previous);
+      if (removed && activePost?.id) {
+        setReviews((prev) =>
+          prev.map((review) => (review.id === activePost.id ? { ...review, comments: review.comments + 1 } : review))
+        );
+      }
+      showToast("댓글 삭제에 실패했습니다.");
     }
   };
 
@@ -789,6 +895,7 @@ export function BookmorakApp() {
         setFollowing(followIds);
         setReviews((prev) => mergeReviews(prev, mergeReviews(feed, mine)));
       }
+      await supabase.auth.updateUser({ data: { bookmorak_registered: true } }).catch(() => undefined);
       setScreen("home");
       showToast("계정이 생성되었습니다.");
       trackEvent("sign_up_complete", { user_status: "member" });
@@ -1074,6 +1181,17 @@ export function BookmorakApp() {
             onMore={() => openMore(activePost.id)}
             onSubmitComment={submitComment}
             onToggleCommentLike={toggleCommentHeart}
+            onEditComment={editCommentBody}
+            onDeleteComment={(commentId) => {
+              setActiveCommentId(commentId);
+              setModal("deleteComment");
+            }}
+            onReportComment={(commentId) => {
+              setActiveCommentId(commentId);
+              setReportTarget("comment");
+              setReportReason("스팸/홍보성");
+              setModal("report");
+            }}
           />
         )}
         <ModalLayer
@@ -1081,12 +1199,21 @@ export function BookmorakApp() {
           activePost={activePost}
           reportReason={reportReason}
           sortBy={sortBy}
-          onClose={() => setModal(null)}
-          onOpenReport={() => setModal("report")}
+          onClose={() => {
+            setModal(null);
+            setActiveCommentId(null);
+            setReportTarget("post");
+          }}
+          onOpenReport={() => {
+            setReportTarget("post");
+            setActiveCommentId(null);
+            setModal("report");
+          }}
           onOpenDelete={() => setModal("deletePost")}
           onReportReason={setReportReason}
           onReport={submitReport}
           onDelete={deleteActivePost}
+          onDeleteComment={deleteActiveComment}
           onEdit={() => {
             setModal(null);
             setEditingReviewId(activePost.id);
@@ -1096,9 +1223,11 @@ export function BookmorakApp() {
             setWriteReturnScreen("post");
             setScreen("write");
           }}
-          onLeaveWrite={(save) => {
+          onLeaveWrite={() => {
             setModal(null);
-            if (save) showToast("임시저장되었습니다.");
+            setDraftRating(0);
+            setDraftBody("");
+            setEditingReviewId(null);
             setScreen(writeReturnScreen === "book" ? "book" : writeReturnScreen);
           }}
           onLogout={() => {
@@ -1171,9 +1300,12 @@ function StartScreen({ onStart, onLogin }: { onStart: () => void; onLogin: () =>
         <button className="primary-button" onClick={onStart}>
           시작하기
         </button>
-        <button className="outline-button" onClick={onLogin}>
-          로그인
-        </button>
+        <p className="start-login-line">
+          이미 책모락 회원이신가요?{" "}
+          <button type="button" className="start-login-link" onClick={onLogin}>
+            로그인
+          </button>
+        </p>
       </div>
     </section>
   );
@@ -1185,7 +1317,7 @@ function AppFrame({ children, active, onNavigate }: { children: React.ReactNode;
       <div className="scroll-content with-tab">{children}</div>
       <nav className="tabbar">
         <TabButton active={active === "home"} icon={active === "home" ? homeActiveIcon : homeIcon} label="홈" onClick={() => onNavigate("home")} />
-        <TabButton active={active === "search"} icon={active === "search" ? searchActiveIcon : searchIcon} label="둘러보기" onClick={() => onNavigate("search")} />
+        <TabButton active={active === "search"} icon={active === "search" ? searchActiveIcon : searchIcon} label="검색" onClick={() => onNavigate("search")} />
         <TabButton active={active === "write"} icon={active === "write" ? writeActiveIcon : writeIcon} label="게시글 생성" onClick={() => onNavigate("write")} />
         <TabButton active={active === "mypage"} icon={active === "mypage" ? myActiveIcon : myIcon} label="마이" onClick={() => onNavigate("mypage")} />
       </nav>
@@ -1589,7 +1721,7 @@ function WriteScreen({
 
   return (
     <section className="scroll-content screen write-screen">
-      <Header title="게시글 작성하기" onBack={onBack} right={<button className="save-button" onClick={() => onToast("임시저장되었습니다.")}>임시저장</button>} />
+      <Header title="게시글 작성하기" onBack={onBack} />
       <div className="selected-book-card">
         <BookCover book={book} />
         <div>
@@ -2077,7 +2209,10 @@ function PostDetailScreen({
   onLike,
   onMore,
   onSubmitComment,
-  onToggleCommentLike
+  onToggleCommentLike,
+  onEditComment,
+  onDeleteComment,
+  onReportComment
 }: {
   review: Review;
   book: Book;
@@ -2090,9 +2225,13 @@ function PostDetailScreen({
   onMore: () => void;
   onSubmitComment: (body: string, parentId?: string) => void;
   onToggleCommentLike: (commentId: string) => void;
+  onEditComment: (commentId: string, body: string) => void;
+  onDeleteComment: (commentId: string) => void;
+  onReportComment: (commentId: string) => void;
 }) {
   const [replyingTo, setReplyingTo] = useState<{ id: string; name: string } | null>(null);
   const [commentText, setCommentText] = useState("");
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const rootComments = comments.filter((comment) => !comment.parentId);
   const repliesByParent = comments.reduce<Record<string, CommentItem[]>>((acc, comment) => {
     if (!comment.parentId) return acc;
@@ -2131,8 +2270,24 @@ function PostDetailScreen({
                 body={comment.body}
                 likes={comment.likes}
                 liked={likedComments.includes(comment.id)}
+                mine={Boolean(comment.mine)}
+                menuOpen={openMenuId === comment.id}
+                onToggleMenu={() => setOpenMenuId((prev) => (prev === comment.id ? null : comment.id))}
+                onCloseMenu={() => setOpenMenuId(null)}
                 onLike={() => onToggleCommentLike(comment.id)}
                 onReply={() => setReplyingTo({ id: comment.id, name: comment.user })}
+                onEdit={(nextBody) => {
+                  setOpenMenuId(null);
+                  onEditComment(comment.id, nextBody);
+                }}
+                onDelete={() => {
+                  setOpenMenuId(null);
+                  onDeleteComment(comment.id);
+                }}
+                onReport={() => {
+                  setOpenMenuId(null);
+                  onReportComment(comment.id);
+                }}
               />
               {(repliesByParent[comment.id] ?? []).length > 0 && (
                 <div className="replies">
@@ -2144,7 +2299,23 @@ function PostDetailScreen({
                       body={reply.body}
                       likes={reply.likes}
                       liked={likedComments.includes(reply.id)}
+                      mine={Boolean(reply.mine)}
+                      menuOpen={openMenuId === reply.id}
+                      onToggleMenu={() => setOpenMenuId((prev) => (prev === reply.id ? null : reply.id))}
+                      onCloseMenu={() => setOpenMenuId(null)}
                       onLike={() => onToggleCommentLike(reply.id)}
+                      onEdit={(nextBody) => {
+                        setOpenMenuId(null);
+                        onEditComment(reply.id, nextBody);
+                      }}
+                      onDelete={() => {
+                        setOpenMenuId(null);
+                        onDeleteComment(reply.id);
+                      }}
+                      onReport={() => {
+                        setOpenMenuId(null);
+                        onReportComment(reply.id);
+                      }}
                     />
                   ))}
                 </div>
@@ -2173,11 +2344,115 @@ function PostDetailScreen({
   );
 }
 
-function Comment({ name, body, likes, liked = false, small = false, onReply, onLike }: { name: string; body: string; likes: number; liked?: boolean; small?: boolean; onReply?: () => void; onLike?: () => void }) {
+function Comment({
+  name,
+  body,
+  likes,
+  liked = false,
+  small = false,
+  mine = false,
+  menuOpen = false,
+  onToggleMenu,
+  onCloseMenu,
+  onReply,
+  onLike,
+  onEdit,
+  onDelete,
+  onReport
+}: {
+  name: string;
+  body: string;
+  likes: number;
+  liked?: boolean;
+  small?: boolean;
+  mine?: boolean;
+  menuOpen?: boolean;
+  onToggleMenu?: () => void;
+  onCloseMenu?: () => void;
+  onReply?: () => void;
+  onLike?: () => void;
+  onEdit?: (body: string) => void;
+  onDelete?: () => void;
+  onReport?: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [editText, setEditText] = useState(body);
+
+  useEffect(() => {
+    setEditText(body);
+  }, [body]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handlePointer = () => onCloseMenu?.();
+    window.addEventListener("click", handlePointer);
+    return () => window.removeEventListener("click", handlePointer);
+  }, [menuOpen, onCloseMenu]);
+
   return (
     <article className={small ? "comment small-comment" : "comment"}>
-      <strong>{name}</strong>
-      <p>{body}</p>
+      <div className="comment-head">
+        <strong>{name}</strong>
+        <div className="comment-more-wrap">
+          <button
+            type="button"
+            className="comment-more-button"
+            aria-label="댓글 더보기"
+            onClick={(event) => {
+              event.stopPropagation();
+              onToggleMenu?.();
+            }}
+          >
+            <MoreHorizontal size={18} />
+          </button>
+          {menuOpen && (
+            <div className="comment-more-menu" onClick={(event) => event.stopPropagation()}>
+              {mine ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditing(true);
+                      setEditText(body);
+                      onCloseMenu?.();
+                    }}
+                  >
+                    수정하기
+                  </button>
+                  <button type="button" className="danger" onClick={onDelete}>
+                    삭제하기
+                  </button>
+                </>
+              ) : (
+                <button type="button" className="danger" onClick={onReport}>
+                  신고하기
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+      {editing ? (
+        <div className="comment-edit">
+          <textarea value={editText} maxLength={1000} onChange={(event) => setEditText(event.target.value)} />
+          <div className="comment-edit-actions">
+            <button type="button" onClick={() => { setEditing(false); setEditText(body); }}>취소</button>
+            <button
+              type="button"
+              className="primary"
+              disabled={!editText.trim()}
+              onClick={() => {
+                onEdit?.(editText.trim());
+                setEditing(false);
+              }}
+            >
+              저장
+            </button>
+          </div>
+        </div>
+      ) : (
+        <p>{body}</p>
+      )}
       <button className={liked ? "liked" : ""} onClick={onLike}><IconAsset src={liked ? likeActiveIcon : likeIcon} alt="" size={15} /> {likes}</button>
       {onReply && <button onClick={onReply}>답글 달기</button>}
     </article>
@@ -2241,6 +2516,7 @@ function ModalLayer({
   onReportReason,
   onReport,
   onDelete,
+  onDeleteComment,
   onEdit,
   onLeaveWrite,
   onLogout,
@@ -2258,8 +2534,9 @@ function ModalLayer({
   onReportReason: (reason: string) => void;
   onReport: () => void;
   onDelete: () => void;
+  onDeleteComment: () => void;
   onEdit: () => void;
-  onLeaveWrite: (save: boolean) => void;
+  onLeaveWrite: () => void;
   onLogout: () => void;
   onDeleteAccount: () => void;
   onProfilePhoto: (kind: "change" | "default") => void;
@@ -2301,15 +2578,16 @@ function ModalLayer({
           </>
         )}
         {modal === "deletePost" && <ConfirmBox icon={<AlertTriangle />} title="이 게시물을 삭제할까요?" body="삭제하면 다시 복구할 수 없어요." confirmLabel="삭제" onCancel={onClose} onConfirm={onDelete} danger />}
+        {modal === "deleteComment" && <ConfirmBox icon={<AlertTriangle />} title="이 댓글을 삭제할까요?" body="삭제하면 다시 복구할 수 없어요." confirmLabel="삭제" onCancel={onClose} onConfirm={onDeleteComment} danger />}
         {modal === "leaveWrite" && (
           <ConfirmBox
             icon={<AlertTriangle />}
-            title="작성 중인 게시물을 저장할까요?"
-            body="나중에 이어서 작성할 수 있어요."
-            cancelLabel="삭제"
-            confirmLabel="임시저장"
-            onCancel={() => onLeaveWrite(false)}
-            onConfirm={() => onLeaveWrite(true)}
+            title="작성을 중단할까요?"
+            body="작성 중인 내용은 저장되지 않습니다."
+            cancelLabel="취소"
+            confirmLabel="나가기"
+            onCancel={onClose}
+            onConfirm={onLeaveWrite}
           />
         )}
         {modal === "logout" && <ConfirmBox title="로그아웃 하시겠습니까?" body="로그아웃 후 시작 화면으로 이동합니다." confirmLabel="로그아웃" onCancel={onClose} onConfirm={onLogout} />}

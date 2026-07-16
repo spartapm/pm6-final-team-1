@@ -268,6 +268,20 @@ svg {
   gap: 14px;
 }
 
+.start-login-line {
+  margin: 0;
+  text-align: center;
+  color: #666666;
+  font-size: 14px;
+}
+
+.start-login-link {
+  color: var(--primary);
+  font-weight: 800;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .lead,
 .hint {
   color: var(--muted);
@@ -1460,6 +1474,7 @@ p {
 }
 
 .comment {
+  position: relative;
   padding: 14px 0;
   border-bottom: 1px solid #efefef;
 }
@@ -1469,11 +1484,97 @@ p {
   color: #555555;
 }
 
+.comment-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.comment-more-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.comment-more-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 !important;
+  padding: 4px;
+  color: #999999;
+}
+
+.comment-more-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 20;
+  min-width: 112px;
+  padding: 6px 0;
+  border: 1px solid #ececec;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 8px 20px rgb(0 0 0 / 10%);
+}
+
+.comment-more-menu button {
+  display: block;
+  width: 100%;
+  margin: 0 !important;
+  padding: 10px 14px;
+  text-align: left;
+  color: #333333;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.comment-more-menu button.danger {
+  color: var(--danger);
+}
+
+.comment-edit {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.comment-edit textarea {
+  min-height: 72px;
+  padding: 10px 12px;
+  border: 1px solid #dddddd;
+  border-radius: 10px;
+  resize: vertical;
+}
+
+.comment-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.comment-edit-actions button {
+  margin: 0 !important;
+  padding: 6px 12px;
+  border-radius: 8px;
+  color: #666666;
+  font-weight: 700;
+}
+
+.comment-edit-actions button.primary {
+  background: var(--primary);
+  color: #ffffff;
+}
+
+.comment-edit-actions button.primary:disabled {
+  opacity: 0.45;
+}
+
 .comment p {
   margin: 8px 0;
 }
 
-.comment button {
+.comment > button {
   display: inline-flex;
   gap: 4px;
   margin-right: 12px;

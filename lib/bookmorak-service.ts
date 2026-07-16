@@ -588,6 +588,44 @@ export async function toggleReviewLike(profileId: string, reviewId: string, shou
   if (error) throw error;
 }
 
+export type CommentItem = {
+  id: string;
+  reviewId: string;
+  parentId: string | null;
+  user: string;
+  tag: string;
+  avatar: string;
+  body: string;
+  likes: number;
+  date: string;
+  mine?: boolean;
+};
+
+type CommentRow = {
+  id: string;
+  review_id: string;
+  parent_id: string | null;
+  body: string;
+  created_at: string;
+  profiles?: { id: string; nickname: string; tag: string; avatar_url: string | null } | null;
+  comment_likes?: { user_id: string }[];
+};
+
+function mapCommentRow(row: CommentRow, currentProfileId?: string): CommentItem {
+  return {
+    id: row.id,
+    reviewId: row.review_id,
+    parentId: row.parent_id,
+    user: row.profiles?.nickname ?? "독서광",
+    tag: row.profiles?.tag ? `#${row.profiles.tag}` : "",
+    avatar: row.profiles?.avatar_url ?? "",
+    body: row.body,
+    likes: row.comment_likes?.length ?? 0,
+    date: formatReviewDate(row.created_at),
+    mine: Boolean(currentProfileId && row.profiles?.id === currentProfileId)
+  };
+}
+
 export async function createComment(profileId: string, reviewId: string, body: string, parentId?: string) {
   const { data, error } = await supabase
     .from("comments")
@@ -606,10 +644,10 @@ export async function createComment(profileId: string, reviewId: string, body: s
     .single();
 
   if (error) throw error;
-  return mapCommentRow(data as unknown as CommentRow);
+  return mapCommentRow(data as unknown as CommentRow, profileId);
 }
 
-export async function listComments(reviewId: string) {
+export async function listComments(reviewId: string, currentProfileId?: string) {
   const { data, error } = await supabase
     .from("comments")
     .select(
@@ -627,7 +665,22 @@ export async function listComments(reviewId: string) {
     .order("created_at", { ascending: true });
 
   if (error) throw error;
-  return ((data ?? []) as unknown as CommentRow[]).map(mapCommentRow);
+  return ((data ?? []) as unknown as CommentRow[]).map((row) => mapCommentRow(row, currentProfileId));
+}
+
+export async function updateComment(commentId: string, body: string) {
+  const { error } = await supabase.from("comments").update({ body }).eq("id", commentId);
+  if (error) throw error;
+}
+
+export async function deleteComment(commentId: string) {
+  const { error } = await supabase.from("comments").delete().eq("id", commentId);
+  if (error) throw error;
+}
+
+export async function reportComment(profileId: string, commentId: string, reason: string) {
+  const { error } = await supabase.from("reports").insert({ reporter_id: profileId, comment_id: commentId, reason });
+  if (error) throw error;
 }
 
 export async function toggleCommentLike(profileId: string, commentId: string, shouldLike: boolean) {
@@ -644,42 +697,6 @@ export async function toggleCommentLike(profileId: string, commentId: string, sh
 export async function reportReview(profileId: string, reviewId: string, reason: string) {
   const { error } = await supabase.from("reports").insert({ reporter_id: profileId, review_id: reviewId, reason });
   if (error) throw error;
-}
-
-export type CommentItem = {
-  id: string;
-  reviewId: string;
-  parentId: string | null;
-  user: string;
-  tag: string;
-  avatar: string;
-  body: string;
-  likes: number;
-  date: string;
-};
-
-type CommentRow = {
-  id: string;
-  review_id: string;
-  parent_id: string | null;
-  body: string;
-  created_at: string;
-  profiles?: { id: string; nickname: string; tag: string; avatar_url: string | null } | null;
-  comment_likes?: { user_id: string }[];
-};
-
-function mapCommentRow(row: CommentRow): CommentItem {
-  return {
-    id: row.id,
-    reviewId: row.review_id,
-    parentId: row.parent_id,
-    user: row.profiles?.nickname ?? "독서광",
-    tag: row.profiles?.tag ? `#${row.profiles.tag}` : "",
-    avatar: row.profiles?.avatar_url ?? "",
-    body: row.body,
-    likes: row.comment_likes?.length ?? 0,
-    date: formatReviewDate(row.created_at)
-  };
 }
 
 export function formatReviewDate(value: string | Date = new Date()) {
