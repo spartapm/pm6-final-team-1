@@ -36,6 +36,7 @@ import startLogoIcon from "../team-1-icons/로고명.svg";
 import startServiceIcon from "../team-1-icons/서비스명.svg";
 import startBgIcon from "../team-1-icons/시작화면-배경.png";
 import defaultAvatarIcon from "../team-1-icons/기본 프로필.svg";
+import bookshelfIcon from "../team-1-icons/홈화면-책장.png";
 import { genres, type Book, type Review } from "./data";
 import { supabase, supabaseUrl } from "@/lib/supabase";
 import { BESTSELLER_ISBN13, BESTSELLER_PREVIEW } from "@/lib/bestseller-isbn13";
@@ -709,7 +710,13 @@ export function BookmorakApp() {
       });
       setDraftBody("");
       setDraftRating(0);
-      setScreen("book");
+      if (writeReturnScreen === "book") {
+        setScreen("book");
+      } else if (writeReturnScreen === "mypage") {
+        setScreen("mypage");
+      } else {
+        setScreen("home");
+      }
       showToast("등록되었습니다.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
@@ -930,12 +937,14 @@ export function BookmorakApp() {
               reviews={feedReviews}
               bookCatalog={liveBooks}
               likedPosts={likedPosts}
+              following={following}
               onBook={(bookId, postId) => openBook(bookId, "home", postId)}
               onPost={(postId) => openPost(postId, "home")}
               onLike={(postId) => toggleLike(postId, "home")}
               onMore={openMore}
               onToast={showToast}
               onNotifications={() => setScreen("notifications")}
+              onFollowing={() => setScreen("following")}
             />
           </AppFrame>
         )}
@@ -999,10 +1008,12 @@ export function BookmorakApp() {
             rating={draftRating}
             body={draftBody}
             submitting={isSubmittingReview}
+            following={following.includes(activeBook.id)}
             onBack={() => (draftRating || draftBody ? setModal("leaveWrite") : setScreen(editingReviewId ? "post" : writeReturnScreen === "book" ? "book" : "write-pick"))}
             onChangeBook={() => setScreen("write-pick")}
             onRating={setDraftRating}
             onBody={setDraftBody}
+            onFollow={() => toggleFollow(activeBook.id, "book")}
             onSubmit={submitReview}
             onToast={showToast}
           />
@@ -1215,7 +1226,36 @@ function IconAsset({ src, alt, size, className }: { src: IconSource; alt: string
   return <Image className={className ? `icon-asset ${className}` : "icon-asset"} src={src} alt={alt} width={size} height={size} unoptimized />;
 }
 
-function HomeScreen({ reviews, bookCatalog, likedPosts, onBook, onPost, onLike, onMore, onToast, onNotifications }: { reviews: Review[]; bookCatalog: Book[]; likedPosts: string[]; onBook: (bookId: string, postId: string) => void; onPost: (postId: string) => void; onLike: (postId: string) => void; onMore: (postId: string) => void; onToast: (message: string) => void; onNotifications: () => void }) {
+function HomeScreen({
+  reviews,
+  bookCatalog,
+  likedPosts,
+  following,
+  onBook,
+  onPost,
+  onLike,
+  onMore,
+  onToast,
+  onNotifications,
+  onFollowing
+}: {
+  reviews: Review[];
+  bookCatalog: Book[];
+  likedPosts: string[];
+  following: string[];
+  onBook: (bookId: string, postId: string) => void;
+  onPost: (postId: string) => void;
+  onLike: (postId: string) => void;
+  onMore: (postId: string) => void;
+  onToast: (message: string) => void;
+  onNotifications: () => void;
+  onFollowing: () => void;
+}) {
+  const followedBooks = following
+    .map((bookId) => bookCatalog.find((book) => book.id === bookId))
+    .filter((book): book is Book => Boolean(book))
+    .slice(0, 12);
+
   return (
     <section className="screen">
       <div className="home-top">
@@ -1224,6 +1264,26 @@ function HomeScreen({ reviews, bookCatalog, likedPosts, onBook, onPost, onLike, 
           <Bell />
         </button>
       </div>
+      <button type="button" className="home-bookshelf" onClick={onFollowing}>
+        <div className="home-bookshelf-label">
+          <strong>팔로우 중인 책</strong>
+          <span>{following.length}권</span>
+        </div>
+        <div className="home-bookshelf-shelf">
+          <Image src={bookshelfIcon} alt="" className="home-bookshelf-bg" unoptimized />
+          <div className="home-bookshelf-spines">
+            {followedBooks.length === 0 ? (
+              <span className="home-bookshelf-empty">관심 책을 팔로우하면 여기에 쌓여요</span>
+            ) : (
+              followedBooks.map((book) => (
+                <span key={book.id} className="home-book-spine" style={{ background: spineColor(book.id) }} title={book.title}>
+                  <em>{book.title}</em>
+                </span>
+              ))
+            )}
+          </div>
+        </div>
+      </button>
       {reviews.length === 0 ? (
         <EmptyState title="아직 게시글이 없어요." body="팔로우한 책의 감상글이 생기면 이곳에 보여드릴게요." />
       ) : (
@@ -1498,7 +1558,33 @@ function WritePickScreen({ books, onBack, onPick }: { books: Book[]; onBack: () 
   );
 }
 
-function WriteScreen({ book, rating, body, submitting = false, onBack, onChangeBook, onRating, onBody, onSubmit, onToast }: { book: Book; rating: number; body: string; submitting?: boolean; onBack: () => void; onChangeBook: () => void; onRating: (rating: number) => void; onBody: (body: string) => void; onSubmit: () => void; onToast: (message: string) => void }) {
+function WriteScreen({
+  book,
+  rating,
+  body,
+  submitting = false,
+  following = true,
+  onBack,
+  onChangeBook,
+  onRating,
+  onBody,
+  onFollow,
+  onSubmit,
+  onToast
+}: {
+  book: Book;
+  rating: number;
+  body: string;
+  submitting?: boolean;
+  following?: boolean;
+  onBack: () => void;
+  onChangeBook: () => void;
+  onRating: (rating: number) => void;
+  onBody: (body: string) => void;
+  onFollow: () => void;
+  onSubmit: () => void;
+  onToast: (message: string) => void;
+}) {
   const canSubmit = rating > 0 && body.trim().length >= 30 && !submitting;
 
   return (
@@ -1512,6 +1598,17 @@ function WriteScreen({ book, rating, body, submitting = false, onBack, onChangeB
         </div>
         <button onClick={onChangeBook}>변경</button>
       </div>
+      {!following && (
+        <div className="write-follow-banner">
+          <div>
+            <strong>팔로우 하지 않은 책이에요</strong>
+            <p>팔로우 하시겠습니까?</p>
+          </div>
+          <button type="button" onClick={onFollow}>
+            팔로우
+          </button>
+        </div>
+      )}
       <h2>이 책은 어떠셨나요?</h2>
       <div className="rating-picker">
         {[1, 2, 3, 4, 5].map((score) => (
@@ -1869,21 +1966,47 @@ function SignupScreen({ onBack, onKakaoLogin, onDone, onToast, onTerms, onPrivac
 }
 
 function FollowingScreen({ following, bookCatalog, onBack, onBook, onFollow }: { following: string[]; bookCatalog: Book[]; onBack: () => void; onBook: (bookId: string) => void; onFollow: (bookId: string) => void }) {
+  const [listedIds] = useState(() => [...following]);
+  const listedBooks = listedIds
+    .map((bookId) => bookCatalog.find((book) => book.id === bookId))
+    .filter((book): book is Book => Boolean(book));
+
   return (
-    <section className="scroll-content screen">
-      <Header title={`팔로잉 총 ${following.length}개`} onBack={onBack} />
+    <section className="scroll-content screen following-screen">
+      <Header title="팔로잉 목록" onBack={onBack} />
+      <p className="following-count">
+        팔로잉 도서 총 <strong>{following.length}</strong> 개
+      </p>
       <div className="book-list">
-        {bookCatalog.filter((book) => following.includes(book.id)).map((book) => (
-          <button key={book.id} className="book-row" onClick={() => onBook(book.id)}>
-            <BookCover book={book} />
-            <span>
-              <strong>{book.title}</strong>
-              <small>{book.author}</small>
-              <em>★ {book.rating.toFixed(1)} · {book.genres.join(" · ")}</em>
-            </span>
-            <b onClick={(event) => { event.stopPropagation(); onFollow(book.id); }}>팔로잉</b>
-          </button>
-        ))}
+        {listedBooks.length === 0 ? (
+          <EmptyState title="팔로잉한 책이 없어요." body="관심 있는 책을 팔로우하면 여기에 모입니다." />
+        ) : (
+          listedBooks.map((book) => {
+            const isFollowing = following.includes(book.id);
+            return (
+              <button key={book.id} className="book-row following-row" onClick={() => onBook(book.id)}>
+                <BookCover book={book} />
+                <span>
+                  <strong>{book.title}</strong>
+                  <small>{book.author}</small>
+                  <em>
+                    ★ {book.rating.toFixed(1)} / 5.0
+                  </em>
+                  <i className="following-tag">{book.genres.join(" · ") || "도서"}</i>
+                </span>
+                <b
+                  className={isFollowing ? "following-chip" : "follow-chip"}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onFollow(book.id);
+                  }}
+                >
+                  {isFollowing ? "팔로잉" : "팔로우"}
+                </b>
+              </button>
+            );
+          })
+        )}
       </div>
     </section>
   );
@@ -2290,6 +2413,16 @@ function formatCount(count: number) {
   }
 
   return String(count);
+}
+
+const SPINE_COLORS = ["#E8A07A", "#7BA6C9", "#8FBF8F", "#C9A0DC", "#E8C96A", "#E07A8A", "#6DB3A8", "#A89B8C"];
+
+function spineColor(seed: string) {
+  let hash = 0;
+  for (let index = 0; index < seed.length; index += 1) {
+    hash = (hash * 31 + seed.charCodeAt(index)) >>> 0;
+  }
+  return SPINE_COLORS[hash % SPINE_COLORS.length];
 }
 
 function mergeBooks(baseBooks: Book[], nextBooks: Book[]) {

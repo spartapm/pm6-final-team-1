@@ -1,6 +1,7 @@
 import { supabase } from "./supabase";
 import type { Book, Review } from "@/app/data";
 import { aladinCacheKey, readAladinCache, writeAladinCache } from "./aladin-cache";
+import { EXTRA_BOOK_GENRES } from "./bestseller-isbn13";
 
 export type Profile = {
   id: string;
@@ -706,6 +707,10 @@ function reviewSelect() {
 
 function mapAladinItemToBook(item: AladinItem): AladinBook {
   const id = item.isbn13 || item.isbn || String(item.itemId ?? item.title ?? crypto.randomUUID());
+  const mappedGenres = mapCategoryToUiGenres(item.categoryName);
+  const forcedGenre = EXTRA_BOOK_GENRES[id];
+  const genres =
+    mappedGenres[0] === "도서" && forcedGenre ? [forcedGenre] : mappedGenres[0] === "도서" ? ["도서"] : mappedGenres;
 
   return {
     id,
@@ -715,7 +720,7 @@ function mapAladinItemToBook(item: AladinItem): AladinBook {
     // Book detail / list ratings should come from in-app user reviews, not Aladin.
     rating: 0,
     followers: 0,
-    genres: mapCategoryToUiGenres(item.categoryName),
+    genres,
     description: item.description || "책 소개를 불러오지 못했습니다.",
     aladinItemId: item.itemId,
     isbn: item.isbn,
@@ -726,13 +731,17 @@ function mapAladinItemToBook(item: AladinItem): AladinBook {
   };
 }
 
-/** Map Aladin category paths onto the UI chip labels (소설, 에세이, ...). */
+/** Map Aladin category paths onto the UI chip labels (소설, 에세이, 자기계발, 과학). */
 export function mapCategoryToUiGenres(categoryName?: string | null): string[] {
   const text = categoryName ?? "";
   const matched: string[] = [];
 
+  // Keep SF under 소설; pure science categories go to 과학.
+  if (/과학소설|SF/.test(text)) matched.push("소설");
+  else if (/과학|천문학|물리학|화학|생물학|지구과학|자연과학|수학/.test(text)) matched.push("과학");
+
   if (/판타지|무협/.test(text)) matched.push("소설");
-  else if (/소설|시\/희곡|희곡|과학소설|SF/.test(text)) matched.push("소설");
+  else if (/소설|시\/희곡|희곡/.test(text)) matched.push("소설");
 
   if (/에세이/.test(text)) matched.push("에세이");
   if (/자기계발/.test(text)) matched.push("자기계발");
@@ -743,7 +752,7 @@ export function mapCategoryToUiGenres(categoryName?: string | null): string[] {
 
   // Fall back to the last path segment only when it already matches a UI chip.
   const leaf = text.split(">").at(-1)?.trim() ?? "";
-  const uiGenres = ["소설", "에세이", "자기계발"];
+  const uiGenres = ["소설", "에세이", "자기계발", "과학"];
   if (uiGenres.includes(leaf)) return [leaf];
 
   return ["도서"];
