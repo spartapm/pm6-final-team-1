@@ -1,4 +1,4 @@
-export const CATALOG_REVISION = "20260716-57-0449-9874";
+export const CATALOG_REVISION = "20260720-catalog-only-57-0449-9874";
 
 export const BESTSELLER_ISBN13 = [
   "9788936434120",

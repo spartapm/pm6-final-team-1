@@ -150,6 +150,9 @@ function clearStoredOnboardingBooks() {
   }
 }
 
+/** Official catalog only: top100 + 추가도서_isbn수정본.csv (no stray DB / old science batch). */
+const CATALOG_ISBN_SET = new Set<string>(BESTSELLER_ISBN13);
+
 const fixedBookPreviews: Book[] = [...BESTSELLER_PREVIEW, ...EXTRA_BOOK_SEED].map((book) => ({
   id: book.isbn13,
   title: book.title,
@@ -342,8 +345,8 @@ export function BookmorakApp() {
       for (let offset = 24; offset < BESTSELLER_ISBN13.length; offset += pageSize) {
         const batch = await fetchFixedBestsellerBooks(pageSize, [], offset).catch(() => []);
         if (!isMounted || batch.length === 0) continue;
-        setLiveBooks((prev) => mergeBooks(prev, batch));
-        await applyBookEngagement(batch.map((book) => book.id));
+        setLiveBooks((prev) => mergeCatalogBooks(prev, batch));
+        await applyBookEngagement(batch.map((book) => book.id).filter((id) => CATALOG_ISBN_SET.has(id)));
       }
     }
 
@@ -372,8 +375,9 @@ export function BookmorakApp() {
         ]);
 
         if (!isMounted) return;
-        // Keep fixed bestseller order, then overlay DB + Aladin details.
-        setLiveBooks(mergeBooks(fixedBookPreviews, [...firstPageBooks, ...dbBooks]));
+        // Catalog-only: enrich official ISBNs; never import stray DB books into search/browse.
+        const dbCatalogBooks = dbBooks.filter((book) => CATALOG_ISBN_SET.has(book.id));
+        setLiveBooks(mergeCatalogBooks(fixedBookPreviews, [...firstPageBooks, ...dbCatalogBooks]));
         if (dbFollows.length > 0) {
           setFollowing((prev) => Array.from(new Set([...prev, ...dbFollows])));
         }
@@ -449,7 +453,7 @@ export function BookmorakApp() {
 
       const nextBooks = details.filter(Boolean) as Book[];
       if (nextBooks.length > 0) {
-        setLiveBooks((prev) => mergeBooks(prev, nextBooks));
+        setLiveBooks((prev) => mergeCatalogBooks(prev, nextBooks));
       }
     });
 
@@ -508,7 +512,7 @@ export function BookmorakApp() {
           followers: nextFollowers
         };
         // Force rating/followers after merge so explicit 0.0 and DB follower counts win.
-        return mergeBooks(prev, [nextBook]).map((book) =>
+        return mergeCatalogBooks(prev, [nextBook]).map((book) =>
           book.id === bookId ? { ...book, rating: userAverage, followers: nextFollowers } : book
         );
       });
@@ -815,7 +819,7 @@ export function BookmorakApp() {
           related.length > 0
             ? Math.round((related.reduce((sum, review) => sum + review.rating, 0) / related.length) * 10) / 10
             : draftRating;
-        return mergeBooks(prev, [{ ...activeBook, rating: average }]);
+        return mergeCatalogBooks(prev, [{ ...activeBook, rating: average }]);
       });
       setDraftBody("");
       setDraftRating(0);
@@ -2738,6 +2742,13 @@ function mergeBooks(baseBooks: Book[], nextBooks: Book[]) {
   });
 
   return Array.from(merged.values());
+}
+
+function mergeCatalogBooks(baseBooks: Book[], nextBooks: Book[]) {
+  return mergeBooks(
+    baseBooks.filter((book) => CATALOG_ISBN_SET.has(book.id)),
+    nextBooks.filter((book) => CATALOG_ISBN_SET.has(book.id))
+  );
 }
 
 function mergeReviews(baseReviews: Review[], nextReviews: Review[]) {
