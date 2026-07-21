@@ -6,7 +6,6 @@ import type { StaticImageData } from "next/image";
 import {
   AlertTriangle,
   Bell,
-  BookOpen,
   ChevronLeft,
   ChevronRight,
   CheckCircle2,
@@ -48,12 +47,15 @@ import {
   mapPostClickSource,
   setAuthIntent,
   consumeAuthIntent,
+  setAppUserId,
+  clearAppUserId,
   trackEvent,
   trackHomePostView
 } from "@/lib/gtm";
 import {
   createComment,
   createReview,
+  createBookRequest,
   deleteComment,
   deleteCurrentAccount,
   deleteReview,
@@ -71,6 +73,7 @@ import {
   listMyReviews,
   reportComment,
   reportReview,
+  sanitizeBookDescription,
   signInWithEmail,
   signInWithKakao,
   signOut,
@@ -107,7 +110,18 @@ type Screen =
   | "profile"
   | "password"
   | "post";
-type ModalType = "more" | "report" | "deletePost" | "deleteComment" | "leaveWrite" | "logout" | "deleteAccount" | "profilePhoto" | "sort" | null;
+type ModalType =
+  | "more"
+  | "report"
+  | "deletePost"
+  | "deleteComment"
+  | "leaveWrite"
+  | "logout"
+  | "deleteAccount"
+  | "profilePhoto"
+  | "sort"
+  | "bookRequest"
+  | null;
 type IconSource = StaticImageData | string;
 
 const currentUser = {
@@ -196,14 +210,22 @@ export function BookmorakApp() {
   const [postReturnScreen, setPostReturnScreen] = useState<Screen>("home");
   const [followingReturnScreen, setFollowingReturnScreen] = useState<Screen>("mypage");
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [bookRequestTitle, setBookRequestTitle] = useState("");
+  const [bookRequestAuthor, setBookRequestAuthor] = useState("");
+  const [isSubmittingBookRequest, setIsSubmittingBookRequest] = useState(false);
   const isSyncing = false;
   const fileInputRef = useRef<HTMLInputElement>(null);
   const prefetchedBookIdsRef = useRef<Set<string>>(new Set());
   const liveBooksRef = useRef(liveBooks);
+  const screenHistoryRef = useRef<Screen[]>([]);
   liveBooksRef.current = liveBooks;
 
   const activeBook = liveBooks.find((book) => book.id === activeBookId) ?? liveBooks[0] ?? fixedBookPreviews[0];
   const activePost = reviews.find((review) => review.id === activePostId) ?? reviews[0];
+
+  useEffect(() => {
+    setAppUserId(profile?.id);
+  }, [profile?.id]);
 
   useEffect(() => {
     let isMounted = true;
@@ -263,6 +285,7 @@ export function BookmorakApp() {
             }
             await signOut().catch(() => undefined);
             if (!isMounted) return;
+            clearAppUserId();
             setProfile(null);
             setFollowing([]);
             setScreen("start");
@@ -281,6 +304,7 @@ export function BookmorakApp() {
         if (!isMounted || !nextProfile) return;
 
         setProfile(nextProfile);
+        setAppUserId(nextProfile.id);
 
         const pendingBooks = readStoredOnboardingBooks();
         if (pendingBooks.length > 0) {
@@ -308,6 +332,10 @@ export function BookmorakApp() {
         setFollowing((prev) => Array.from(new Set([...prev, ...followIds])));
         if (nextReviews.length > 0) {
           setReviews((prev) => mergeReviews(prev, nextReviews));
+          const likedIds = collectLikedReviewIds(nextReviews);
+          if (likedIds.length > 0) {
+            setLikedPosts((prev) => Array.from(new Set([...prev, ...likedIds])));
+          }
         }
         await applyBookEngagement(Array.from(new Set([...followIds, ...liveBooksRef.current.map((book) => book.id)])));
 
@@ -325,6 +353,7 @@ export function BookmorakApp() {
       data: { subscription }
     } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === "SIGNED_OUT") {
+        clearAppUserId();
         setProfile(null);
         setFollowing([]);
         setSessionEmail("");
@@ -364,6 +393,7 @@ export function BookmorakApp() {
 
         if (session?.user?.email) setSessionEmail(session.user.email);
         setProfile(currentProfile);
+        if (currentProfile) setAppUserId(currentProfile.id);
         if (session?.user || currentProfile) {
           setScreen("home");
         }
@@ -387,6 +417,10 @@ export function BookmorakApp() {
           if (!isMounted) return;
           if (nextReviews.length > 0) {
             setReviews((prev) => mergeReviews(prev, nextReviews));
+            const likedIds = collectLikedReviewIds(nextReviews);
+            if (likedIds.length > 0) {
+              setLikedPosts((prev) => Array.from(new Set([...prev, ...likedIds])));
+            }
           }
         }
 
@@ -411,10 +445,11 @@ export function BookmorakApp() {
   }, []);
 
   const filteredBooks = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
+    const normalized = normalizeSearchText(query);
     return liveBooks.filter((book) => {
       const genreMatches = selectedGenre === "전체" || book.genres.includes(selectedGenre);
-      const queryMatches = !normalized || `${book.title} ${book.author}`.toLowerCase().includes(normalized);
+      const haystack = normalizeSearchText(`${book.title} ${book.author}`);
+      const queryMatches = !normalized || haystack.includes(normalized);
       return genreMatches && queryMatches;
     });
   }, [liveBooks, query, selectedGenre]);
@@ -473,6 +508,7 @@ export function BookmorakApp() {
       book_id: bookId,
       source: mapBookDetailSource(returnScreen)
     });
+    screenHistoryRef.current.push(returnScreen);
     setBookReturnScreen(returnScreen);
     setActiveBookId(bookId);
     setBookDetailReviews([]);
@@ -488,6 +524,10 @@ export function BookmorakApp() {
       setBookDetailReviews(bookReviews);
       if (bookReviews.length > 0) {
         setReviews((prev) => mergeReviews(prev, bookReviews));
+        const likedIds = collectLikedReviewIds(bookReviews);
+        if (likedIds.length > 0) {
+          setLikedPosts((prev) => Array.from(new Set([...prev, ...likedIds])));
+        }
       }
 
       const userAverage =
@@ -506,7 +546,7 @@ export function BookmorakApp() {
           title: detailedBook?.title || previous?.title || bookId,
           author: detailedBook?.author || previous?.author || "",
           cover: detailedBook?.cover || previous?.cover || "",
-          description: detailedBook?.description || previous?.description || "",
+          description: sanitizeBookDescription(detailedBook?.description || previous?.description || ""),
           genres: detailedBook?.genres?.length ? detailedBook.genres : previous?.genres ?? [],
           rating: userAverage,
           followers: nextFollowers
@@ -528,6 +568,7 @@ export function BookmorakApp() {
       book_id: target?.bookId || activeBook.id,
       source: mapPostClickSource(returnScreen)
     });
+    screenHistoryRef.current.push(returnScreen);
     setPostReturnScreen(returnScreen);
     setActivePostId(postId);
     setScreen("post");
@@ -536,9 +577,23 @@ export function BookmorakApp() {
     try {
       const comments = await listComments(postId, profile?.id);
       setPostComments(comments);
+      const likedIds = comments.filter((comment) => comment.likedByMe).map((comment) => comment.id);
+      if (likedIds.length > 0) {
+        setLikedComments((prev) => Array.from(new Set([...prev, ...likedIds])));
+      }
     } catch {
       setPostComments([]);
     }
+  };
+
+  const goBackFromBook = () => {
+    const previous = screenHistoryRef.current.pop() ?? bookReturnScreen;
+    setScreen(previous);
+  };
+
+  const goBackFromPost = () => {
+    const previous = screenHistoryRef.current.pop() ?? postReturnScreen;
+    setScreen(previous);
   };
 
   const openWritePicker = (returnScreen: Screen = screen) => {
@@ -628,6 +683,20 @@ export function BookmorakApp() {
   const toggleLike = async (postId: string, likeScreen: Screen = screen) => {
     const shouldLike = !likedPosts.includes(postId);
     setLikedPosts((prev) => (prev.includes(postId) ? prev.filter((id) => id !== postId) : [...prev, postId]));
+    setReviews((prev) =>
+      prev.map((review) =>
+        review.id === postId
+          ? { ...review, likes: Math.max(0, review.likes + (shouldLike ? 1 : -1)), likedByMe: shouldLike }
+          : review
+      )
+    );
+    setBookDetailReviews((prev) =>
+      prev.map((review) =>
+        review.id === postId
+          ? { ...review, likes: Math.max(0, review.likes + (shouldLike ? 1 : -1)), likedByMe: shouldLike }
+          : review
+      )
+    );
 
     if (!profile || postId.startsWith("r")) {
       return;
@@ -643,6 +712,20 @@ export function BookmorakApp() {
       }
     } catch {
       setLikedPosts((prev) => (shouldLike ? prev.filter((id) => id !== postId) : [...prev, postId]));
+      setReviews((prev) =>
+        prev.map((review) =>
+          review.id === postId
+            ? { ...review, likes: Math.max(0, review.likes + (shouldLike ? -1 : 1)), likedByMe: !shouldLike }
+            : review
+        )
+      );
+      setBookDetailReviews((prev) =>
+        prev.map((review) =>
+          review.id === postId
+            ? { ...review, likes: Math.max(0, review.likes + (shouldLike ? -1 : 1)), likedByMe: !shouldLike }
+            : review
+        )
+      );
       showToast("좋아요 처리에 실패했습니다.");
     }
   };
@@ -655,7 +738,7 @@ export function BookmorakApp() {
   const deleteActivePost = async () => {
     setReviews((prev) => prev.filter((review) => review.id !== activePost.id));
     setModal(null);
-    setScreen(postReturnScreen);
+    goBackFromPost();
 
     try {
       if (!activePost.id.startsWith("r")) {
@@ -665,6 +748,38 @@ export function BookmorakApp() {
     } catch {
       setReviews((prev) => [activePost, ...prev]);
       showToast("삭제에 실패했습니다.");
+    }
+  };
+
+  const openBookRequestModal = () => {
+    setBookRequestTitle(query.trim());
+    setBookRequestAuthor("");
+    setModal("bookRequest");
+  };
+
+  const submitBookRequest = async () => {
+    const title = bookRequestTitle.trim();
+    const author = bookRequestAuthor.trim();
+    if (!title || !author) {
+      showToast("책 제목과 저자를 입력해주세요.");
+      return;
+    }
+
+    setIsSubmittingBookRequest(true);
+    try {
+      await createBookRequest({
+        title,
+        author,
+        searchQuery: query.trim() || title,
+        profileId: profile?.id
+      });
+      setModal(null);
+      setBookRequestAuthor("");
+      showToast("요청이 완료되었습니다.");
+    } catch {
+      showToast("책 등록 요청에 실패했습니다.");
+    } finally {
+      setIsSubmittingBookRequest(false);
     }
   };
 
@@ -848,6 +963,7 @@ export function BookmorakApp() {
     try {
       const loggedInProfile = await signInWithEmail(email, password);
       setProfile(loggedInProfile);
+      if (loggedInProfile) setAppUserId(loggedInProfile.id);
       setSessionEmail(email);
       if (loggedInProfile) {
         const pendingBooks = readStoredOnboardingBooks();
@@ -889,6 +1005,7 @@ export function BookmorakApp() {
     try {
       const createdProfile = await signUpWithEmail(email, password, nickname);
       setProfile(createdProfile);
+      if (createdProfile) setAppUserId(createdProfile.id);
       setSessionEmail(email);
       if (createdProfile) {
         const pendingBooks = selectedBooks.length > 0 ? selectedBooks : readStoredOnboardingBooks();
@@ -1092,6 +1209,7 @@ export function BookmorakApp() {
               onGenre={setSelectedGenre}
               onBook={(bookId) => openBook(bookId, "search")}
               onFollow={(bookId) => toggleFollow(bookId, "search")}
+              onRequestBook={openBookRequestModal}
             />
           </AppFrame>
         )}
@@ -1102,7 +1220,7 @@ export function BookmorakApp() {
             following={following.includes(activeBook.id)}
             likedPosts={likedPosts}
             sortBy={sortBy}
-            onBack={() => setScreen(bookReturnScreen)}
+            onBack={goBackFromBook}
             onFollow={() => toggleFollow(activeBook.id, "book")}
             onWrite={() => openWriteForBook(activeBook.id, "book")}
             onPost={(postId) => openPost(postId, "book")}
@@ -1130,7 +1248,7 @@ export function BookmorakApp() {
             onChangeBook={() => setScreen("write-pick")}
             onRating={setDraftRating}
             onBody={setDraftBody}
-            onFollow={() => toggleFollow(activeBook.id, "book")}
+            onFollow={() => toggleFollow(activeBook.id, "write")}
             onSubmit={submitReview}
             onToast={showToast}
           />
@@ -1188,7 +1306,7 @@ export function BookmorakApp() {
             liked={likedPosts.includes(activePost.id)}
             comments={postComments}
             likedComments={likedComments}
-            onBack={() => setScreen(postReturnScreen)}
+            onBack={goBackFromPost}
             onBook={(bookId) => openBook(bookId, "post", activePost.id)}
             onLike={() => toggleLike(activePost.id, "post")}
             onMore={() => openMore(activePost.id)}
@@ -1212,6 +1330,9 @@ export function BookmorakApp() {
           activePost={activePost}
           reportReason={reportReason}
           sortBy={sortBy}
+          bookRequestTitle={bookRequestTitle}
+          bookRequestAuthor={bookRequestAuthor}
+          isSubmittingBookRequest={isSubmittingBookRequest}
           onClose={() => {
             setModal(null);
             setActiveCommentId(null);
@@ -1243,9 +1364,13 @@ export function BookmorakApp() {
             setEditingReviewId(null);
             setScreen(writeReturnScreen === "book" ? "book" : writeReturnScreen);
           }}
+          onBookRequestTitle={setBookRequestTitle}
+          onBookRequestAuthor={setBookRequestAuthor}
+          onSubmitBookRequest={submitBookRequest}
           onLogout={() => {
             setModal(null);
             signOut().finally(() => {
+              clearAppUserId();
               setProfile(null);
               setFollowing([]);
               setScreen("start");
@@ -1256,6 +1381,7 @@ export function BookmorakApp() {
             setModal(null);
             deleteCurrentAccount()
               .then(() => {
+                clearAppUserId();
                 setProfile(null);
                 setFollowing([]);
                 setReviews([]);
@@ -1464,7 +1590,8 @@ function SearchScreen({
   onRemoveRecent,
   onGenre,
   onBook,
-  onFollow
+  onFollow,
+  onRequestBook
 }: {
   query: string;
   selectedGenre: string;
@@ -1479,6 +1606,7 @@ function SearchScreen({
   onGenre: (genre: string) => void;
   onBook: (bookId: string) => void;
   onFollow: (bookId: string) => void;
+  onRequestBook: () => void;
 }) {
   return (
     <section className="screen">
@@ -1559,7 +1687,12 @@ function SearchScreen({
         ))}
       </div>
       {results.length === 0 ? (
-        <EmptyState title="아직 등록되지 않은 책이에요." body="곧 더 많은 책을 준비할게요. 조금만 기다려 주세요." />
+        <EmptyState
+          title="아직 등록되지 않은 책이에요."
+          body="곧 더 많은 책을 준비할게요. 조금만 기다려 주세요."
+          actionLabel={query.trim() ? "책 등록 요청하기" : undefined}
+          onAction={query.trim() ? onRequestBook : undefined}
+        />
       ) : (
         <div className="book-grid">
           {results.map((book) => (
@@ -1586,83 +1719,88 @@ function SearchScreen({
 
 function BookDetailScreen({ book, reviews, following, likedPosts, sortBy, onBack, onFollow, onWrite, onPost, onLike, onMore, onSort, onToast }: { book: Book; reviews: Review[]; following: boolean; likedPosts: string[]; sortBy: "latest" | "popular"; onBack: () => void; onFollow: () => void; onWrite: () => void; onPost: (postId: string) => void; onLike: (postId: string) => void; onMore: (postId: string) => void; onSort: () => void; onToast: (message: string) => void }) {
   const [introExpanded, setIntroExpanded] = useState(false);
-  const isLoadingIntro = book.description.includes("실시간으로 불러오는 중");
-  const canExpandIntro = book.description.length > 120;
-  const intro = !canExpandIntro || introExpanded ? book.description : `${book.description.slice(0, 120)}...`;
+  const introText = sanitizeBookDescription(book.description);
+  const isLoadingIntro = introText.includes("실시간으로 불러오는 중");
+  const canExpandIntro = introText.length > 120;
+  const intro = !canExpandIntro || introExpanded ? introText : `${introText.slice(0, 120)}...`;
 
   useEffect(() => {
     setIntroExpanded(false);
   }, [book.id]);
 
   return (
-    <section className="scroll-content screen detail-screen">
-      <Header onBack={onBack} />
-      <div className="book-hero">
-        <BookCover book={book} />
-        <div>
-          <h1>{book.title}</h1>
-          <p>{book.author}</p>
-          <strong className="rating-line">★ {book.rating.toFixed(1)}</strong>
-          <div className="tags">{book.genres.map((genre) => <span key={genre}>{genre}</span>)}</div>
-          <div className="book-actions">
-            <p>
-              <strong>{formatCount(book.followers)}</strong> 팔로워
-            </p>
-            <button className={following ? "outline-small active" : "outline-small"} onClick={onFollow}>
-              {following ? "팔로우 취소" : "팔로우"}
-            </button>
-          </div>
-          <button className="primary-button compact" onClick={onWrite}>작성하기</button>
-        </div>
-      </div>
-      <section className="book-intro">
-        <h2>책 소개</h2>
-        {isLoadingIntro ? (
-          <p className="hint">알라딘 API에서 책 소개를 불러오고 있습니다.</p>
-        ) : (
-          <p>
-            {intro}
-            {canExpandIntro && (
-              <button onClick={() => setIntroExpanded((prev) => !prev)}>
-                {introExpanded ? "접기" : "더보기"}
+    <>
+      <section className="scroll-content screen detail-screen">
+        <Header onBack={onBack} />
+        <div className="book-hero">
+          <BookCover book={book} />
+          <div>
+            <h1>{book.title}</h1>
+            <p>{book.author}</p>
+            <strong className="rating-line">★ {book.rating.toFixed(1)}</strong>
+            <div className="tags">{book.genres.map((genre) => <span key={genre}>{genre}</span>)}</div>
+            <div className="book-actions">
+              <p>
+                <strong>{formatCount(book.followers)}</strong> 팔로워
+              </p>
+              <button className={following ? "outline-small active" : "outline-small"} onClick={onFollow}>
+                {following ? "팔로우 취소" : "팔로우"}
               </button>
-            )}
-          </p>
+            </div>
+          </div>
+        </div>
+        <section className="book-intro">
+          <h2>책 소개</h2>
+          {isLoadingIntro ? (
+            <p className="hint">알라딘 API에서 책 소개를 불러오고 있습니다.</p>
+          ) : (
+            <p>
+              {intro}
+              {canExpandIntro && (
+                <button onClick={() => setIntroExpanded((prev) => !prev)}>
+                  {introExpanded ? "접기" : "더보기"}
+                </button>
+              )}
+            </p>
+          )}
+        </section>
+        <div className="sort-row">
+          <button onClick={onSort}>
+            {sortBy === "latest" ? "최신순" : "좋아요순"} <ChevronRight size={16} />
+          </button>
+        </div>
+        {reviews.length === 0 ? (
+          <EmptyState title="아직 게시글이 없어요." body="이 책의 첫 번째 감상을 남겨보세요." />
+        ) : (
+          reviews.map((review) => (
+            <ReviewCard
+              key={review.id}
+              review={review}
+              book={book}
+              compact
+              liked={likedPosts.includes(review.id)}
+              onBook={() => undefined}
+              onPost={() => onPost(review.id)}
+              onLike={() => onLike(review.id)}
+              onMore={() => onMore(review.id)}
+              onToast={onToast}
+            />
+          ))
         )}
       </section>
-      <div className="sort-row">
-        <button onClick={onSort}>
-          {sortBy === "latest" ? "최신순" : "좋아요순"} <ChevronRight size={16} />
-        </button>
-      </div>
-      {reviews.length === 0 ? (
-        <EmptyState title="아직 게시글이 없어요." body="이 책의 첫 번째 감상을 남겨보세요." />
-      ) : (
-        reviews.map((review) => (
-          <ReviewCard
-            key={review.id}
-            review={review}
-            book={book}
-            compact
-            liked={likedPosts.includes(review.id)}
-            onBook={() => undefined}
-            onPost={() => onPost(review.id)}
-            onLike={() => onLike(review.id)}
-            onMore={() => onMore(review.id)}
-            onToast={onToast}
-          />
-        ))
-      )}
-    </section>
+      <button className="primary-button detail-fixed-write" onClick={onWrite}>
+        작성하기
+      </button>
+    </>
   );
 }
 
 function WritePickScreen({ books, onBack, onPick }: { books: Book[]; onBack: () => void; onPick: (bookId: string) => void }) {
   const [query, setQuery] = useState("");
   const filteredBooks = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
+    const normalized = normalizeSearchText(query);
     if (!normalized) return books;
-    return books.filter((book) => `${book.title} ${book.author}`.toLowerCase().includes(normalized));
+    return books.filter((book) => normalizeSearchText(`${book.title} ${book.author}`).includes(normalized));
   }, [books, query]);
 
   return (
@@ -1917,7 +2055,7 @@ function ReviewCard({
       </button>
       <footer className="review-meta">
         <button className={liked ? "liked" : ""} onClick={onLike}>
-          <IconAsset src={liked ? likeActiveIcon : likeIcon} alt="" size={17} /> {formatCount(review.likes + (liked ? 1 : 0))}
+          <IconAsset src={liked ? likeActiveIcon : likeIcon} alt="" size={17} /> {formatCount(review.likes)}
         </button>
         <button onClick={onPost}>
           <IconAsset src={commentIcon} alt="" size={17} /> {review.comments}
@@ -1931,10 +2069,10 @@ function ReviewCard({
 function OnboardingScreen({ bookCatalog, selectedBooks, selectedGenre, onBack, onGenre, onToggleBook, onNext }: { bookCatalog: Book[]; selectedBooks: string[]; selectedGenre: string; onBack: () => void; onGenre: (genre: string) => void; onToggleBook: (bookId: string) => void; onNext: () => void }) {
   const [query, setQuery] = useState("");
   const visibleBooks = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
+    const normalized = normalizeSearchText(query);
     return bookCatalog.filter((book) => {
       const genreMatches = selectedGenre === "전체" || book.genres.includes(selectedGenre);
-      const queryMatches = !normalized || `${book.title} ${book.author}`.toLowerCase().includes(normalized);
+      const queryMatches = !normalized || normalizeSearchText(`${book.title} ${book.author}`).includes(normalized);
       return genreMatches && queryMatches;
     });
   }, [bookCatalog, query, selectedGenre]);
@@ -2267,7 +2405,7 @@ function PostDetailScreen({
       </div>
       <p className="post-body">{review.body}</p>
       <footer className="review-meta">
-        <button className={liked ? "liked" : ""} onClick={onLike}><IconAsset src={liked ? likeActiveIcon : likeIcon} alt="" size={18} /> {formatCount(review.likes + (liked ? 1 : 0))}</button>
+        <button className={liked ? "liked" : ""} onClick={onLike}><IconAsset src={liked ? likeActiveIcon : likeIcon} alt="" size={18} /> {formatCount(review.likes)}</button>
         <button><IconAsset src={commentIcon} alt="" size={18} /> 댓글 {comments.length}</button>
         <time>{review.date}</time>
       </footer>
@@ -2523,6 +2661,9 @@ function ModalLayer({
   activePost,
   reportReason,
   sortBy,
+  bookRequestTitle,
+  bookRequestAuthor,
+  isSubmittingBookRequest,
   onClose,
   onOpenReport,
   onOpenDelete,
@@ -2535,12 +2676,18 @@ function ModalLayer({
   onLogout,
   onDeleteAccount,
   onProfilePhoto,
-  onSort
+  onSort,
+  onBookRequestTitle,
+  onBookRequestAuthor,
+  onSubmitBookRequest
 }: {
   modal: ModalType;
   activePost: Review;
   reportReason: string;
   sortBy: "latest" | "popular";
+  bookRequestTitle: string;
+  bookRequestAuthor: string;
+  isSubmittingBookRequest: boolean;
   onClose: () => void;
   onOpenReport: () => void;
   onOpenDelete: () => void;
@@ -2554,10 +2701,41 @@ function ModalLayer({
   onDeleteAccount: () => void;
   onProfilePhoto: (kind: "change" | "default") => void;
   onSort: (sort: "latest" | "popular") => void;
+  onBookRequestTitle: (value: string) => void;
+  onBookRequestAuthor: (value: string) => void;
+  onSubmitBookRequest: () => void;
 }) {
   if (!modal) return null;
 
   const reportReasons = ["스팸/홍보성", "욕설/비방/혐오", "음란물/선정적", "허위정보", "개인정보 노출", "저작권 침해"];
+
+  if (modal === "bookRequest") {
+    const canSubmit = Boolean(bookRequestTitle.trim() && bookRequestAuthor.trim()) && !isSubmittingBookRequest;
+    return (
+      <div className="modal-backdrop centered" onClick={onClose}>
+        <div className="modal-dialog" onClick={(event) => event.stopPropagation()}>
+          <h2>책 등록 요청하기</h2>
+          <p className="lead">요청 내용은 검토 후에 운영 정책에 따라 처리돼요.</p>
+          <label className="field">
+            <span>책 제목</span>
+            <input value={bookRequestTitle} onChange={(event) => onBookRequestTitle(event.target.value)} placeholder="책 제목을 입력하세요" />
+          </label>
+          <label className="field">
+            <span>저자</span>
+            <input value={bookRequestAuthor} onChange={(event) => onBookRequestAuthor(event.target.value)} placeholder="한강" />
+          </label>
+          <div className="confirm-actions">
+            <button type="button" onClick={onClose}>
+              취소
+            </button>
+            <button type="button" className="danger" disabled={!canSubmit} onClick={onSubmitBookRequest}>
+              {isSubmittingBookRequest ? "요청 중..." : "요청"}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -2684,14 +2862,37 @@ function RatingStars({ rating }: { rating: number }) {
   );
 }
 
-function EmptyState({ title, body }: { title: string; body: string }) {
+function EmptyState({
+  title,
+  body,
+  actionLabel,
+  onAction
+}: {
+  title: string;
+  body: string;
+  actionLabel?: string;
+  onAction?: () => void;
+}) {
   return (
     <div className="empty-state">
-      <BookOpen />
+      <Image className="empty-illustration" src={startCharacterIcon} alt="" width={160} height={130} unoptimized />
       <strong>{title}</strong>
       <p>{body}</p>
+      {actionLabel && onAction && (
+        <button type="button" className="primary-button empty-cta" onClick={onAction}>
+          {actionLabel}
+        </button>
+      )}
     </div>
   );
+}
+
+function normalizeSearchText(value: string) {
+  return value.replace(/\s+/g, "").toLowerCase();
+}
+
+function collectLikedReviewIds(reviews: Review[]) {
+  return reviews.filter((review) => review.likedByMe).map((review) => review.id);
 }
 
 function formatCount(count: number) {

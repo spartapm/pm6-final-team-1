@@ -589,6 +589,27 @@ export async function toggleReviewLike(profileId: string, reviewId: string, shou
   if (error) throw error;
 }
 
+export async function createBookRequest(input: {
+  title: string;
+  author: string;
+  searchQuery?: string;
+  profileId?: string | null;
+}) {
+  const title = input.title.trim();
+  const author = input.author.trim();
+  if (!title || !author) {
+    throw new Error("책 제목과 저자를 입력해주세요.");
+  }
+
+  const { error } = await supabase.from("book_requests").insert({
+    title,
+    author,
+    search_query: input.searchQuery?.trim() || title,
+    requested_by: input.profileId ?? null
+  });
+  if (error) throw error;
+}
+
 export type CommentItem = {
   id: string;
   reviewId: string;
@@ -600,6 +621,7 @@ export type CommentItem = {
   likes: number;
   date: string;
   mine?: boolean;
+  likedByMe?: boolean;
 };
 
 type CommentRow = {
@@ -623,7 +645,8 @@ function mapCommentRow(row: CommentRow, currentProfileId?: string): CommentItem 
     body: row.body,
     likes: row.comment_likes?.length ?? 0,
     date: formatReviewDate(row.created_at),
-    mine: Boolean(currentProfileId && row.profiles?.id === currentProfileId)
+    mine: Boolean(currentProfileId && row.profiles?.id === currentProfileId),
+    likedByMe: Boolean(currentProfileId && row.comment_likes?.some((like) => like.user_id === currentProfileId))
   };
 }
 
@@ -739,7 +762,7 @@ function mapAladinItemToBook(item: AladinItem): AladinBook {
     rating: 0,
     followers: 0,
     genres,
-    description: item.description || "책 소개를 불러오지 못했습니다.",
+    description: sanitizeBookDescription(item.description || "책 소개를 불러오지 못했습니다."),
     aladinItemId: item.itemId,
     isbn: item.isbn,
     isbn13: item.isbn13,
@@ -791,8 +814,30 @@ function mapBookRow(row: BookRow): Book {
     rating: Math.round(average * 10) / 10,
     followers: row.book_follows?.length ?? 0,
     genres: genres.length > 0 ? genres : mappedFromCategory,
-    description: row.description || "책 소개를 불러오지 못했습니다."
+    description: sanitizeBookDescription(row.description || "책 소개를 불러오지 못했습니다.")
   };
+}
+
+/** Decode HTML entities and strip tags from Aladin/book descriptions. */
+export function decodeHtmlEntities(value: string) {
+  return value
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&amp;/gi, "&")
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+}
+
+export function sanitizeBookDescription(value: string) {
+  return decodeHtmlEntities(value)
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function normalizeCoverUrl(cover?: string) {
@@ -815,6 +860,7 @@ function mapReviewRow(row: ReviewRow, currentProfileId?: string): Review {
     likes: row.review_likes?.length ?? 0,
     comments: row.comments?.length ?? 0,
     date: formatReviewDate(row.created_at),
-    mine: Boolean(currentProfileId && row.profiles?.id === currentProfileId)
+    mine: Boolean(currentProfileId && row.profiles?.id === currentProfileId),
+    likedByMe: Boolean(currentProfileId && row.review_likes?.some((like) => like.user_id === currentProfileId))
   };
 }

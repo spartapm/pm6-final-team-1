@@ -21,6 +21,7 @@ export type Review = {
   comments: number;
   date: string;
   mine?: boolean;
+  likedByMe?: boolean;
 };
 
 export const books: Book[] = [
