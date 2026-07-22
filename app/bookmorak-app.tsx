@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import Image from "next/image";
 import type { StaticImageData } from "next/image";
 import {
@@ -218,6 +218,8 @@ export function BookmorakApp() {
   const prefetchedBookIdsRef = useRef<Set<string>>(new Set());
   const liveBooksRef = useRef(liveBooks);
   const screenHistoryRef = useRef<Screen[]>([]);
+  const homeScrollRef = useRef<HTMLDivElement>(null);
+  const homeScrollTopRef = useRef(0);
   liveBooksRef.current = liveBooks;
 
   const activeBook = liveBooks.find((book) => book.id === activeBookId) ?? liveBooks[0] ?? fixedBookPreviews[0];
@@ -1163,7 +1165,15 @@ export function BookmorakApp() {
           }
         }} onDone={handleSignup} onToast={showToast} onTerms={() => { setPolicyReturn("signup"); setScreen("terms"); }} onPrivacy={() => { setPolicyReturn("signup"); setScreen("privacy"); }} />}
         {screen === "home" && (
-          <AppFrame active="home" onNavigate={(next) => (next === "write" ? openWritePicker("home") : setScreen(next))}>
+          <AppFrame
+            active="home"
+            onNavigate={(next) => (next === "write" ? openWritePicker("home") : setScreen(next))}
+            scrollRef={homeScrollRef}
+            savedScrollTop={homeScrollTopRef.current}
+            onScrollTopChange={(top) => {
+              homeScrollTopRef.current = top;
+            }}
+          >
             <HomeScreen
               reviews={feedReviews}
               bookCatalog={liveBooks}
@@ -1450,10 +1460,47 @@ function StartScreen({ onStart, onLogin }: { onStart: () => void; onLogin: () =>
   );
 }
 
-function AppFrame({ children, active, onNavigate }: { children: React.ReactNode; active: "home" | "search" | "write" | "mypage"; onNavigate: (screen: Screen) => void }) {
+function AppFrame({
+  children,
+  active,
+  onNavigate,
+  scrollRef,
+  savedScrollTop = 0,
+  onScrollTopChange
+}: {
+  children: React.ReactNode;
+  active: "home" | "search" | "write" | "mypage";
+  onNavigate: (screen: Screen) => void;
+  scrollRef?: RefObject<HTMLDivElement | null>;
+  savedScrollTop?: number;
+  onScrollTopChange?: (top: number) => void;
+}) {
+  useEffect(() => {
+    const node = scrollRef?.current;
+    if (!node || savedScrollTop <= 0) return;
+
+    const restore = () => {
+      node.scrollTop = savedScrollTop;
+    };
+
+    restore();
+    const frame = window.requestAnimationFrame(restore);
+    const timer = window.setTimeout(restore, 0);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+    };
+  }, [savedScrollTop, scrollRef]);
+
   return (
     <>
-      <div className="scroll-content with-tab">{children}</div>
+      <div
+        ref={scrollRef}
+        className="scroll-content with-tab"
+        onScroll={(event) => onScrollTopChange?.(event.currentTarget.scrollTop)}
+      >
+        {children}
+      </div>
       <nav className="tabbar">
         <TabButton active={active === "home"} icon={active === "home" ? homeActiveIcon : homeIcon} label="홈" onClick={() => onNavigate("home")} />
         <TabButton active={active === "search"} icon={active === "search" ? searchActiveIcon : searchIcon} label="검색" onClick={() => onNavigate("search")} />
@@ -2722,7 +2769,7 @@ function ModalLayer({
           </label>
           <label className="field">
             <span>저자</span>
-            <input value={bookRequestAuthor} onChange={(event) => onBookRequestAuthor(event.target.value)} placeholder="한강" />
+            <input value={bookRequestAuthor} onChange={(event) => onBookRequestAuthor(event.target.value)} placeholder="" />
           </label>
           <div className="confirm-actions">
             <button type="button" onClick={onClose}>
