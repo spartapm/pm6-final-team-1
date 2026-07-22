@@ -1,5 +1,5 @@
 type DataLayerEvent = {
-  event: string;
+  event?: string;
   [key: string]: string | number | boolean | undefined;
 };
 
