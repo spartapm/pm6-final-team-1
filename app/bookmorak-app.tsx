@@ -52,10 +52,9 @@ import {
   trackHomePostView
 } from "@/lib/gtm";
 import {
-  PRIVACY_INTRO,
-  PRIVACY_SECTIONS,
-  PRIVACY_TABLE_ROWS,
-  TERMS_SECTIONS
+  PRIVACY_BLOCKS,
+  TERMS_BLOCKS,
+  type PolicyBlock
 } from "@/lib/policy-content";
 import {
   createComment,
@@ -2817,54 +2816,65 @@ function NotificationsScreen({ onBack, onPost, onClear }: { onBack: () => void; 
 }
 
 function PolicyScreen({ title, privacy = false, onBack }: { title: string; privacy?: boolean; onBack: () => void }) {
-  const sections = privacy ? PRIVACY_SECTIONS : TERMS_SECTIONS;
+  const blocks = privacy ? PRIVACY_BLOCKS : TERMS_BLOCKS;
 
   return (
     <section className="scroll-content screen policy-screen">
       <Header title={title} onBack={onBack} />
       <article className="policy-card">
-        <h2>{privacy ? "개인정보 수집 및 이용 안내" : "책모락 이용약관"}</h2>
-        {privacy && <p className="policy-intro">{PRIVACY_INTRO}</p>}
-        {privacy && (
-          <div className="policy-table-wrap">
-            <h3>개인정보 수집 및 이용 동의 (필수)</h3>
-            <table className="policy-table">
-              <thead>
-                <tr>
-                  <th>수집 목적</th>
-                  <th>수집 항목</th>
-                  <th>보유 및 이용 기간</th>
-                </tr>
-              </thead>
-              <tbody>
-                {PRIVACY_TABLE_ROWS.map((row) => (
-                  <tr key={row.purpose}>
-                    <td>{row.purpose}</td>
-                    <td>{row.items}</td>
-                    <td>{row.retention}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-        {sections.map((section) => (
-          <section key={section.title} className="policy-section">
-            <h3>{section.title}</h3>
-            {section.paragraphs?.map((paragraph) => (
-              <p key={paragraph}>{paragraph}</p>
-            ))}
-            {section.items && section.items.length > 0 && (
-              <ol>
-                {section.items.map((item) => (
-                  <li key={item}>{item}</li>
-                ))}
-              </ol>
-            )}
-          </section>
+        {blocks.map((block, index) => (
+          <PolicyBlockView key={`${block.type}-${index}`} block={block} />
         ))}
       </article>
     </section>
+  );
+}
+
+function PolicyBlockView({ block }: { block: PolicyBlock }) {
+  if (block.type === "docTitle") return <h2>{block.text}</h2>;
+  if (block.type === "chapter") return <h3 className="policy-chapter">{block.text}</h3>;
+  if (block.type === "heading") return <h3>{block.text}</h3>;
+  if (block.type === "subheading") return <h4>{block.text}</h4>;
+  if (block.type === "p") return <p>{block.text}</p>;
+  if (block.type === "ol") {
+    return (
+      <ol>
+        {block.items.map((item) => (
+          <li key={item}>{item}</li>
+        ))}
+      </ol>
+    );
+  }
+  if (block.type === "ul") {
+    return (
+      <ul>
+        {block.items.map((item) => (
+          <li key={item}>{item}</li>
+        ))}
+      </ul>
+    );
+  }
+  return (
+    <div className="policy-table-wrap">
+      <table className="policy-table">
+        <thead>
+          <tr>
+            {block.headers.map((header) => (
+              <th key={header}>{header}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {block.rows.map((row) => (
+            <tr key={row.join("|")}>
+              {row.map((cell) => (
+                <td key={cell}>{cell}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
