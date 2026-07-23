@@ -10,8 +10,7 @@ import {
   ChevronRight,
   CheckCircle2,
   Mail,
-  MoreHorizontal,
-  ShieldCheck
+  MoreHorizontal
 } from "lucide-react";
 import homeIcon from "../team-1-icons/(홈) 하단바.svg";
 import homeActiveIcon from "../team-1-icons/(홈) 하단바-1.svg";
@@ -36,7 +35,7 @@ import startServiceIcon from "../team-1-icons/서비스명.svg";
 import startBgIcon from "../team-1-icons/시작화면-배경.png";
 import defaultAvatarIcon from "../team-1-icons/기본 프로필.svg";
 import bookshelfIcon from "../team-1-icons/홈화면-책장.png";
-import { genres, type Book, type Review } from "./data";
+import { genres, reviews as sampleReviews, type Book, type Review } from "./data";
 import { supabase, supabaseUrl } from "@/lib/supabase";
 import { BESTSELLER_ISBN13, BESTSELLER_PREVIEW, CATALOG_REVISION, EXTRA_BOOK_SEED } from "@/lib/bestseller-isbn13";
 import { ensureCatalogCacheRevision } from "@/lib/aladin-cache";
@@ -52,6 +51,12 @@ import {
   trackEvent,
   trackHomePostView
 } from "@/lib/gtm";
+import {
+  PRIVACY_INTRO,
+  PRIVACY_SECTIONS,
+  PRIVACY_TABLE_ROWS,
+  TERMS_SECTIONS
+} from "@/lib/policy-content";
 import {
   createComment,
   createReview,
@@ -164,6 +169,26 @@ function clearStoredOnboardingBooks() {
   }
 }
 
+const HOME_GUIDE_KEY = "bookmorak:home-guide-seen";
+
+function hasSeenHomeGuide(profileId: string) {
+  if (typeof window === "undefined" || !profileId) return true;
+  try {
+    return window.localStorage.getItem(`${HOME_GUIDE_KEY}:${profileId}`) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function markHomeGuideSeen(profileId: string) {
+  if (typeof window === "undefined" || !profileId) return;
+  try {
+    window.localStorage.setItem(`${HOME_GUIDE_KEY}:${profileId}`, "1");
+  } catch {
+    // ignore
+  }
+}
+
 /** Official catalog only: top100 + 추가도서_isbn수정본.csv (no stray DB / old science batch). */
 const CATALOG_ISBN_SET = new Set<string>(BESTSELLER_ISBN13);
 
@@ -220,6 +245,9 @@ export function BookmorakApp() {
   const screenHistoryRef = useRef<Screen[]>([]);
   const homeScrollRef = useRef<HTMLDivElement>(null);
   const homeScrollTopRef = useRef(0);
+  const searchScrollRef = useRef<HTMLDivElement>(null);
+  const searchScrollTopRef = useRef(0);
+  const [showHomeGuide, setShowHomeGuide] = useState(false);
   liveBooksRef.current = liveBooks;
 
   const activeBook = liveBooks.find((book) => book.id === activeBookId) ?? liveBooks[0] ?? fixedBookPreviews[0];
@@ -228,6 +256,14 @@ export function BookmorakApp() {
   useEffect(() => {
     setAppUserId(profile?.id);
   }, [profile?.id]);
+
+  useEffect(() => {
+    if (screen !== "home" || !profile?.id) {
+      setShowHomeGuide(false);
+      return;
+    }
+    setShowHomeGuide(!hasSeenHomeGuide(profile.id));
+  }, [screen, profile?.id]);
 
   useEffect(() => {
     let isMounted = true;
@@ -1200,7 +1236,15 @@ export function BookmorakApp() {
           />
         )}
         {screen === "search" && (
-          <AppFrame active="search" onNavigate={(next) => (next === "write" ? openWritePicker("search") : setScreen(next))}>
+          <AppFrame
+            active="search"
+            onNavigate={(next) => (next === "write" ? openWritePicker("search") : setScreen(next))}
+            scrollRef={searchScrollRef}
+            savedScrollTop={searchScrollTopRef.current}
+            onScrollTopChange={(top) => {
+              searchScrollTopRef.current = top;
+            }}
+          >
             <SearchScreen
               query={query}
               selectedGenre={selectedGenre}
@@ -1431,6 +1475,33 @@ export function BookmorakApp() {
           }}
         />
         {toast && <div className="toast">{toast}</div>}
+        {showHomeGuide && profile && (
+          <div className="home-guide-overlay" role="dialog" aria-modal="true" aria-label="홈 피드 안내">
+            <button
+              type="button"
+              className="home-guide-close"
+              aria-label="닫기"
+              onClick={() => {
+                markHomeGuideSeen(profile.id);
+                setShowHomeGuide(false);
+              }}
+            >
+              ×
+            </button>
+            <div className="home-guide-copy">
+              <strong>
+                사람이 아닌 책을 팔로우해서
+                <br />
+                나만의 감상글 피드를 만들어요
+              </strong>
+              <p>
+                내가 고른 책들로 채워지는 나만의 피드,
+                <br />
+                그 안에서 모락모락 피어나는 이야기
+              </p>
+            </div>
+          </div>
+        )}
       </div>
     </main>
   );
@@ -2128,7 +2199,7 @@ function OnboardingScreen({ bookCatalog, selectedBooks, selectedGenre, onBack, o
     <section className="scroll-content screen onboarding-screen">
       <Header title="관심 도서 선택" onBack={onBack} />
       <div className="progress"><span style={{ width: "50%" }} /></div>
-      <p className="lead">관심 있는 책을 2권 이상 선택하면 취향에 맞는 피드를 먼저 볼 수 있어요.</p>
+      <p className="lead">관심 있는 책을 2권 이상 선택하면 선택한 책에 대한 게시글을 한 곳에서 볼 수 있어요.</p>
       <label className="search-box write-pick-search">
         <IconAsset src={searchFieldIcon} alt="" size={20} />
         <input
@@ -2178,11 +2249,44 @@ function OnboardingScreen({ bookCatalog, selectedBooks, selectedGenre, onBack, o
 
 function PreviewScreen({ bookCatalog, selectedBooks, onBack, onAdd, onSignup }: { bookCatalog: Book[]; selectedBooks: string[]; onBack: () => void; onAdd: () => void; onSignup: () => void }) {
   const selected = bookCatalog.filter((book) => selectedBooks.includes(book.id));
+  const [previewReviews, setPreviewReviews] = useState<Review[]>([]);
+  const [loadingPreview, setLoadingPreview] = useState(true);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadPreview() {
+      setLoadingPreview(true);
+      try {
+        const fromDb =
+          selectedBooks.length > 0 ? await listFeedReviews(selectedBooks).catch(() => [] as Review[]) : ([] as Review[]);
+        let next = fromDb.slice(0, 3);
+
+        if (next.length < 3 && selectedBooks.length > 0) {
+          const fillers = sampleReviews.slice(0, 3 - next.length).map((review, index) => ({
+            ...review,
+            id: `preview-${review.id}-${index}`,
+            bookId: selectedBooks[(next.length + index) % selectedBooks.length]
+          }));
+          next = [...next, ...fillers].slice(0, 3);
+        }
+
+        if (isMounted) setPreviewReviews(next);
+      } finally {
+        if (isMounted) setLoadingPreview(false);
+      }
+    }
+
+    void loadPreview();
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedBooks]);
 
   return (
-    <section className="scroll-content screen">
+    <section className="scroll-content screen preview-screen">
       <Header title="피드 미리보기" onBack={onBack} />
-      <p className="lead">선택한 책 기반으로 이런 감상글을 만나볼 수 있어요.</p>
+      <p className="lead">선택한 책으로 꾸려진 감상글을 만나볼 수 있어요.</p>
       <div className="selected-book-scroll">
         {selected.map((book) => (
           <button key={book.id} className="mini-book">
@@ -2190,10 +2294,38 @@ function PreviewScreen({ bookCatalog, selectedBooks, onBack, onAdd, onSignup }: 
             <span>{book.title}</span>
           </button>
         ))}
-        <button className="add-book" onClick={onAdd}>+ 책 추가하기</button>
+        <button className="add-book" onClick={onAdd}>
+          + 책 추가하기
+        </button>
       </div>
-      <EmptyState title="가입하면 실제 감상글을 볼 수 있어요." body="선택한 책을 기준으로 DB에 저장된 감상글이 홈 피드에 표시됩니다." />
-      <button className="primary-button floating-start" onClick={onSignup}>시작하기</button>
+      {loadingPreview ? (
+        <p className="hint" style={{ textAlign: "center", padding: "40px 0" }}>
+          감상글을 불러오는 중이에요...
+        </p>
+      ) : previewReviews.length === 0 ? (
+        <EmptyState title="아직 미리볼 감상글이 없어요." body="선택한 책에 대한 감상글이 등록되면 이곳에 보여드릴게요." />
+      ) : (
+        <div className="preview-feed">
+          {previewReviews.map((review) => {
+            const book = bookCatalog.find((item) => item.id === review.bookId) ?? selected[0] ?? bookCatalog[0];
+            return (
+              <ReviewCard
+                key={review.id}
+                review={review}
+                book={book}
+                liked={false}
+                onBook={() => undefined}
+                onPost={() => undefined}
+                onLike={() => undefined}
+                onToast={() => undefined}
+              />
+            );
+          })}
+        </div>
+      )}
+      <button className="primary-button floating-start" onClick={onSignup}>
+        시작하기
+      </button>
     </section>
   );
 }
@@ -2685,19 +2817,52 @@ function NotificationsScreen({ onBack, onPost, onClear }: { onBack: () => void; 
 }
 
 function PolicyScreen({ title, privacy = false, onBack }: { title: string; privacy?: boolean; onBack: () => void }) {
+  const sections = privacy ? PRIVACY_SECTIONS : TERMS_SECTIONS;
+
   return (
-    <section className="scroll-content screen">
+    <section className="scroll-content screen policy-screen">
       <Header title={title} onBack={onBack} />
       <article className="policy-card">
-        <ShieldCheck />
         <h2>{privacy ? "개인정보 수집 및 이용 안내" : "책모락 이용약관"}</h2>
-        <p>
-          책모락은 독서 감상 공유 서비스를 제공하기 위해 계정 정보, 프로필 정보, 작성한 게시글과 댓글, 팔로잉 도서 정보를 처리합니다.
-          본 MVP에서는 약관 전문을 앱 내부 하드코딩 문서로 제공하며, 실제 배포 시 법무 검토를 거친 전문으로 교체해야 합니다.
-        </p>
-        <p>
-          사용자는 언제든 설정에서 로그아웃하거나 계정 삭제를 요청할 수 있으며, 계정 삭제 시 작성한 게시글, 댓글, 대댓글, 좋아요, 팔로우 정보가 함께 삭제됩니다.
-        </p>
+        {privacy && <p className="policy-intro">{PRIVACY_INTRO}</p>}
+        {privacy && (
+          <div className="policy-table-wrap">
+            <h3>개인정보 수집 및 이용 동의 (필수)</h3>
+            <table className="policy-table">
+              <thead>
+                <tr>
+                  <th>수집 목적</th>
+                  <th>수집 항목</th>
+                  <th>보유 및 이용 기간</th>
+                </tr>
+              </thead>
+              <tbody>
+                {PRIVACY_TABLE_ROWS.map((row) => (
+                  <tr key={row.purpose}>
+                    <td>{row.purpose}</td>
+                    <td>{row.items}</td>
+                    <td>{row.retention}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {sections.map((section) => (
+          <section key={section.title} className="policy-section">
+            <h3>{section.title}</h3>
+            {section.paragraphs?.map((paragraph) => (
+              <p key={paragraph}>{paragraph}</p>
+            ))}
+            {section.items && section.items.length > 0 && (
+              <ol>
+                {section.items.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ol>
+            )}
+          </section>
+        ))}
       </article>
     </section>
   );

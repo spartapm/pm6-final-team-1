@@ -1443,8 +1443,118 @@ p {
   text-align: left;
 }
 
-.policy-card p {
+.policy-card h2 {
+  margin: 0 0 8px;
+  font-size: 20px;
+  font-weight: 900;
+}
+
+.policy-card h3 {
+  margin: 18px 0 8px;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.policy-card p,
+.policy-card li {
+  margin: 0 0 8px;
+  color: #333;
+  font-size: 14px;
+  line-height: 1.6;
+  letter-spacing: -0.02em;
+}
+
+.policy-card ol {
+  margin: 0 0 8px;
+  padding-left: 18px;
+}
+
+.policy-intro {
+  margin-bottom: 12px !important;
+  color: #555 !important;
+}
+
+.policy-table-wrap {
+  margin: 8px 0 16px;
+  overflow-x: auto;
+}
+
+.policy-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.policy-table th,
+.policy-table td {
+  padding: 10px 8px;
+  border: 1px solid #e5e5e5;
+  vertical-align: top;
+  text-align: left;
+  line-height: 1.45;
+}
+
+.policy-table th {
+  background: #f7f7f7;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.policy-section + .policy-section {
+  margin-top: 4px;
+}
+
+.preview-feed {
+  display: grid;
+  gap: 12px;
+  padding-bottom: 88px;
+}
+
+.home-guide-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 28px 24px;
+  background: rgb(20 20 20 / 42%);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.home-guide-close {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  width: 40px;
+  height: 40px;
+  color: #fff;
+  font-size: 28px;
+  line-height: 1;
+}
+
+.home-guide-copy {
+  max-width: 300px;
+  text-align: center;
+  color: #fff;
+}
+
+.home-guide-copy strong {
+  display: block;
+  margin-bottom: 16px;
+  font-size: 22px;
+  font-weight: 900;
+  line-height: 1.4;
+  letter-spacing: -0.04em;
+}
+
+.home-guide-copy p {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 500;
   line-height: 1.55;
+  letter-spacing: -0.03em;
+  opacity: 0.95;
 }
 
 .settings-list {
